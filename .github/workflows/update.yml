@@ -34,7 +34,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.x"
 
       - name: 依存関係をインストール
         run: pip install -r scripts/requirements.txt
@@ -60,8 +60,19 @@ jobs:
         run: cp data/festivals.json data/festivals.prev.json
 
       - name: 祭りデータを収集
+        id: collect
         if: steps.decide.outputs.collect == 'yes'
         run: python3 scripts/build.py
+        timeout-minutes: 100
+        continue-on-error: true
+
+      # 一時的な通信エラーで丸1ヶ月ぶん落とさないよう、1回だけやり直す
+      - name: 収集をやり直す
+        if: steps.decide.outputs.collect == 'yes' && steps.collect.outcome == 'failure'
+        run: |
+          echo "::warning::1回目の収集に失敗したので再試行します"
+          sleep 60
+          python3 scripts/build.py
         timeout-minutes: 100
 
       - name: 生成物を検証
