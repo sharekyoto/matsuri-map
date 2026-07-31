@@ -59,19 +59,27 @@ PREFS = [
     "鹿児島県", "沖縄県",
 ]
 
+# (カテゴリ名, 信頼できるか, 再帰の深さ)
+#   信頼できる = そのカテゴリの記事はほぼ全部が祭り・行事。名前フィルタをかけない。
+#     「ナマハゲ」「チャッキラコ」「エイサー」など、名前に「祭」が入らない行事を
+#     取りこぼさないために重要。
 SEED_CATEGORIES = [
-    "Category:日本の祭り (都道府県別)",
-    "Category:重要無形民俗文化財",
-    "Category:選択無形民俗文化財",
-    "Category:都道府県指定無形民俗文化財",
-    "Category:日本の年中行事",
-    "Category:日本の民俗芸能",
-    "Category:神道の祭祀",
-    "Category:日本の花火大会",
-    "Category:日本の盆踊り",
-    "Category:山・鉾・屋台行事",
-    "Category:日本の神事",
+    ("Category:日本の祭り (都道府県別)",      True,  3),
+    ("Category:重要無形民俗文化財",           True,  2),
+    ("Category:選択無形民俗文化財",           True,  2),
+    ("Category:都道府県指定無形民俗文化財",   True,  2),
+    ("Category:山・鉾・屋台行事",             True,  2),
+    ("Category:日本の盆踊り",                 True,  2),
+    ("Category:日本の花火大会",               True,  3),
+    ("Category:日本の年中行事",               False, 2),
+    ("Category:日本の民俗芸能",               False, 3),
+    ("Category:神道の祭祀",                   False, 2),
+    ("Category:日本の神事",                   False, 2),
+    ("Category:日本の伝統芸能",               False, 2),
 ]
+
+# 都道府県別カテゴリは親カテゴリ経由だと取りこぼすので直接列挙する
+PREF_CATEGORIES = [f"Category:{p}の祭り" for p in PREFS]
 
 # 祭りらしいタイトルの判定（カテゴリ経由で入ってきたノイズを落とす）
 NAME_OK = re.compile(
@@ -350,16 +358,54 @@ PREF_RE = re.compile("(" + "|".join(PREFS) + ")")
 CITY_RE = re.compile(r"([一-龥ぁ-んァ-ヶA-Za-zー]{1,8}?[市町村区])")
 
 
+VENUE_RE = re.compile(r"([一-龥ぁ-んァ-ヶa-zA-Z0-9ヶケ]{2,12}?"
+                      r"(?:神社|神宮|大社|八幡宮|天満宮|稲荷|寺|院|廟|宮))")
+VENUE_NG = re.compile(r"(神社本庁|神社庁|寺社|神社建築|総本社|系神社)")
+
+
+def extract_venue(wikitext: str, text: str) -> str:
+    """祭りが行われる神社・寺の記事名を推定する。座標補完に使う。"""
+    m = re.search(r"\|\s*(?:会場|開催場所|場所|神社|寺院|venue)\s*=\s*([^\n|}]{2,40})",
+                  wikitext or "")
+    if m:
+        v = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]|]+)\]\]", r"\1", m.group(1))
+        v = re.sub(r"\{\{[^{}]*\}\}", "", v).strip()
+        mm = VENUE_RE.search(v)
+        if mm and not VENUE_NG.search(mm.group(1)):
+            return mm.group(1)
+
+    for m in re.finditer(r"\[\[([^\]|#]{2,20})(?:\|[^\]]*)?\]\]", (wikitext or "")[:4000]):
+        t = m.group(1).strip()
+        if VENUE_RE.fullmatch(t) and not VENUE_NG.search(t):
+            return t
+
+    for m in VENUE_RE.finditer((text or "")[:1200]):
+        if not VENUE_NG.search(m.group(1)):
+            return m.group(1)
+    return ""
+
+
 def extract_place(text: str, hint_pref: str | None, hint_city: str) -> tuple:
     pref = hint_pref
     if not pref:
         m = PREF_RE.search(text[:900])
         pref = m.group(1) if m else None
+
     city = hint_city
     if not city:
         m = CITY_RE.search(text[:900])
         city = m.group(1) if m else ""
-    return pref, city
+
+    # 「兵庫県兵庫県三木市」のような二重表記を防ぐ
+    if city:
+        m = PREF_RE.match(city)
+        if m:
+            if not pref:
+                pref = m.group(1)
+            city = city[m.end():]
+        if pref and city.startswith(pref):
+            city = city[len(pref):]
+    return pref, city.strip()
 
 
 SCHED_CUES = ["開催日", "開催期間", "開催時期", "日程", "斎行", "例祭日", "祭礼日",
@@ -394,18 +440,30 @@ def extract_schedule_text(text: str, wikitext: str = "") -> str:
         r"\d{1,2}月(?:上旬|中旬|下旬|初旬)|旧暦\d{1,2}月|"
         r"[のと]?(?:成人|海|敬老|スポーツ|体育)の日)")
 
-    sents = re.split(r"[。\n]", text)
+    HISTORY = re.compile(
+        r"(\d{3,4}年|[明治大正昭和平成令和]\d{1,2}年|元年|"
+        r"変更|改称|中止|廃止|再開|創始|始まっ|起源|由来|以前は|かつては|"
+        r"だったが|されたが|に移(?:さ|っ)|遷|戦後|当時)")
 
-    # 2) 文脈語つき（前方の文を優先）
-    for sent in sents[:120]:
-        if DATEPAT.search(sent) and any(c in sent for c in SCHED_CUES):
-            return sent.strip()[:120]
+    sents = [x for x in re.split(r"[。\n]", text) if x.strip()]
 
-    # 3) 文脈語なし
-    for sent in sents[:120]:
-        if DATEPAT.search(sent):
+    def scan(pool, need_cue):
+        for sent in pool:
+            if not DATEPAT.search(sent):
+                continue
+            if need_cue and not any(c in sent for c in SCHED_CUES):
+                continue
             return sent.strip()[:120]
-    return ""
+        return ""
+
+    clean = [x for x in sents[:150] if not HISTORY.search(x)]
+    r = scan(clean, True)
+    if r:
+        return r
+    r = scan(clean, False)
+    if r:
+        return r
+    return scan(sents[:150], True)
 
 
 def slugify(title: str) -> str:
@@ -468,6 +526,7 @@ def build_record(title: str, page: dict, hint: dict) -> dict | None:
         "lat": page.get("lat"),
         "lng": page.get("lng"),
         "qid": page.get("qid"),
+        "venue": extract_venue(wt, text),
         "url": page.get("url"),
         "summary": re.sub(r"\s+", " ", text[:180]).strip(),
         "when": date_text,
@@ -543,14 +602,27 @@ def main() -> None:
 
     if not args.no_categories:
         print("[2/6] カテゴリを走査…", flush=True)
-        for cat in SEED_CATEGORIES:
-            got = category_members(cat, depth=2)
+        def absorb(titles: set, trusted: bool, pref: str | None = None) -> int:
             new = 0
-            for t in got:
-                if t not in hints and NAME_OK.search(t) and not NAME_NG.search(t):
-                    hints[t] = {"pref": None, "city": "", "dateText": "", "fromList": False}
-                    new += 1
-            print(f"      {cat}: +{new}（累計 {len(hints)}）", flush=True)
+            for t in titles:
+                if t in hints or NAME_NG.search(t):
+                    continue
+                if not trusted and not NAME_OK.search(t):
+                    continue
+                hints[t] = {"pref": pref, "city": "", "dateText": "", "fromList": False}
+                new += 1
+            return new
+
+        for pref in PREFS:
+            got = category_members(f"Category:{pref}の祭り", depth=2)
+            if got:
+                n = absorb(got, trusted=True, pref=pref)
+                print(f"      {pref}: +{n}（累計 {len(hints)}）", flush=True)
+
+        for cat, trusted, depth in SEED_CATEGORIES:
+            got = category_members(cat, depth=depth)
+            n = absorb(got, trusted=trusted)
+            print(f"      {cat}: +{n}（累計 {len(hints)}）", flush=True)
     else:
         print("[2/6] カテゴリ走査をスキップ")
 
@@ -582,17 +654,45 @@ def main() -> None:
                 r["geoSrc"] = "wikidata"
         print(f"      Wikidata から {len(wdc)} 件")
 
+    todo = [r for r in records if r["lat"] is None and r.get("venue")]
+    if todo:
+        print(f"      会場記事から座標を引く: {len(todo)} 件", flush=True)
+        vpages = fetch_pages(sorted({r["venue"] for r in todo}))
+        vcoord = {t: (p["lat"], p["lng"]) for t, p in vpages.items()
+                  if p.get("lat") is not None}
+        need = [p["qid"] for t, p in vpages.items()
+                if p.get("lat") is None and p.get("qid")]
+        if need:
+            vwd = wikidata_coords(sorted(set(need)))
+            for t, p in vpages.items():
+                if t not in vcoord and p.get("qid") in vwd:
+                    vcoord[t] = vwd[p["qid"]]
+        hit = 0
+        for r in todo:
+            if r["venue"] in vcoord:
+                r["lat"], r["lng"] = vcoord[r["venue"]]
+                r["geoSrc"] = "venue"
+                hit += 1
+        print(f"        {hit} 件を補完", flush=True)
+
     if not args.no_geocode:
         todo = [r for r in records if r["lat"] is None]
         print(f"      ジオコーディング対象 {len(todo)} 件", flush=True)
         for n, r in enumerate(todo):
-            q = f"{r['pref'] or ''}{r['city'] or ''}".strip()
-            if not q:
-                continue
-            c = geocode(q)
-            if c:
-                r["lat"], r["lng"] = c
-                r["geoSrc"] = "gsi-city"
+            pref = r.get("pref") or ""
+            city = r.get("city") or ""
+            venue = r.get("venue") or ""
+            for q, src in ((f"{pref}{city}{venue}", "gsi-venue"),
+                           (f"{pref}{city}", "gsi-city"),
+                           (f"{pref}{venue}", "gsi-venue"),
+                           (city, "gsi-city")):
+                if not q.strip():
+                    continue
+                c = geocode(q)
+                if c:
+                    r["lat"], r["lng"] = c
+                    r["geoSrc"] = src
+                    break
             if n % 100 == 0:
                 print(f"        {n}/{len(todo)}", flush=True)
 
