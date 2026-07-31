@@ -1,0 +1,28 @@
+# 自動更新を何年も動かし続けるための設定。
+#
+# GitHub Actions で使っている actions/checkout などは、数年で古い版が
+# 動かなくなる。これが個人サイトの自動化が静かに死ぬ最大の原因なので、
+# Dependabot に新しい版へのプルリクを自動で作らせる。
+#
+# 毎月1回チェック。プルリクが来たら Merge を押すだけでよい。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "actions"
+    labels:
+      - "自動更新の保守"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/scripts"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "pip"
+    labels:
+      - "自動更新の保守"
+    open-pull-requests-limit: 3
