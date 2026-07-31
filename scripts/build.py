@@ -1,0 +1,540 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+全国の祭りデータを収集して data/festivals.json を生成する。
+
+データソース（すべて無料・API キー不要）
+  1. 日本語版 Wikipedia  MediaWiki API
+       - 「日本の祭一覧」記事のウィキテキスト（名称・市町村・開催日が揃っている）
+       - Category:日本の祭り (都道府県別) 以下の全記事（小さな地元の祭りを拾う）
+       - Category:重要無形民俗文化財 / 日本の年中行事 / 日本の民俗芸能
+  2. Wikidata          座標 (P625) の補完
+  3. 国土地理院ジオコーディング API  市区町村名からの座標補完
+  4. data/manual.csv   手入力ぶんのマージ（Wikipedia に無い集落の祭り用）
+
+使い方:
+    python3 scripts/build.py                # フル実行
+    python3 scripts/build.py --limit 300    # 動作確認用に件数を絞る
+    python3 scripts/build.py --no-geocode   # ジオコーディングを省略（高速）
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+import time
+import unicodedata
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dates as D            # noqa: E402
+import taxonomy as TX        # noqa: E402
+import wareki as W           # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(ROOT, "data")
+CACHE_DIR = os.path.join(ROOT, ".cache")
+
+WP_API = "https://ja.wikipedia.org/w/api.php"
+WD_API = "https://www.wikidata.org/w/api.php"
+GSI_GEOCODE = "https://msearch.gsi.go.jp/address-search/AddressSearch"
+
+UA = ("MatsuriMap/1.0 (https://github.com/; festival open-data builder; "
+      "contact: via GitHub issues) python-urllib")
+
+THIS_YEAR = dt.date.today().year
+YEARS = [THIS_YEAR, THIS_YEAR + 1, THIS_YEAR + 2]
+
+PREFS = [
+    "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県", "茨城県", "栃木県",
+    "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県", "新潟県", "富山県", "石川県", "福井県",
+    "山梨県", "長野県", "岐阜県", "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府",
+    "兵庫県", "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県", "徳島県",
+    "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県",
+    "鹿児島県", "沖縄県",
+]
+
+SEED_CATEGORIES = [
+    "Category:日本の祭り (都道府県別)",
+    "Category:重要無形民俗文化財",
+    "Category:選択無形民俗文化財",
+    "Category:日本の年中行事",
+    "Category:日本の民俗芸能",
+    "Category:神道の祭祀",
+]
+
+# 祭りらしいタイトルの判定（カテゴリ経由で入ってきたノイズを落とす）
+NAME_OK = re.compile(
+    r"(祭|祀|まつり|マツリ|まち$|行事|神事|踊|おどり|舞|ばやし|囃子|神楽|獅子|曳山|山車|"
+    r"だんじり|山笠|山鉾|太鼓|流し|送り|迎え|市$|講|大会|フェス|カーニバル|参り|まいり|"
+    r"詣|会陽|蘇民|やぶさめ|流鏑馬|competition)"
+)
+NAME_NG = re.compile(
+    r"(一覧|カテゴリ|Category|Template|Wikipedia:|Portal:|の登場人物|漫画|アニメ|"
+    r"小説|映画|テレビ|楽曲|アルバム|選手権大会$|甲子園|オリンピック|の歴史$)"
+)
+
+
+# ---------------------------------------------------------------------------
+# HTTP
+# ---------------------------------------------------------------------------
+def http_json(url: str, params: dict, retries: int = 4) -> dict:
+    q = urllib.parse.urlencode(params, doseq=True)
+    full = f"{url}?{q}"
+    last = None
+    for i in range(retries):
+        try:
+            req = urllib.request.Request(full, headers={"User-Agent": UA,
+                                                        "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=45) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except Exception as e:                              # noqa: BLE001
+            last = e
+            time.sleep(1.5 * (i + 1))
+    print(f"  ! request failed: {last}", file=sys.stderr)
+    return {}
+
+
+def wp(params: dict) -> dict:
+    p = {"format": "json", "formatversion": 2, "maxlag": 5, **params}
+    return http_json(WP_API, p)
+
+
+# ---------------------------------------------------------------------------
+# 1) タイトル収集
+# ---------------------------------------------------------------------------
+def fetch_list_article() -> "OrderedDict[str, dict]":
+    """「日本の祭一覧」から (記事名 -> {city, dateText, pref}) を抽出。"""
+    out: "OrderedDict[str, dict]" = OrderedDict()
+    r = wp({"action": "query", "prop": "revisions", "rvprop": "content",
+            "rvslots": "main", "titles": "日本の祭一覧"})
+    try:
+        text = r["query"]["pages"][0]["revisions"][0]["slots"]["main"]["content"]
+    except Exception:                                        # noqa: BLE001
+        print("  ! 日本の祭一覧 の取得に失敗", file=sys.stderr)
+        return out
+
+    cur_pref = None
+    for line in text.split("\n"):
+        h = re.match(r"^==+\s*(.+?)\s*==+\s*$", line)
+        if h:
+            name = re.sub(r"\[\[|\]\]", "", h.group(1)).strip()
+            if name in PREFS:
+                cur_pref = name
+            continue
+        if not line.lstrip().startswith("*"):
+            continue
+
+        # 記事リンク（最初のもの）を祭りの名前とみなす
+        m = re.search(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", line)
+        if not m:
+            continue
+        title = m.group(1).split("#")[0].strip()
+        if not title or NAME_NG.search(title):
+            continue
+
+        # （市町村、開催日）の丸括弧
+        paren = re.findall(r"[（(]([^（）()]{2,80})[）)]", line)
+        city, date_text = "", ""
+        for p in paren:
+            p_clean = re.sub(r"\[\[([^\]|]*\|)?([^\]]+)\]\]", r"\2", p)
+            parts = re.split(r"[、,]", p_clean)
+            for part in parts:
+                part = part.strip()
+                if re.search(r"[月日曜旬暦]", part) and not date_text:
+                    date_text = part
+                elif re.search(r"(市|町|村|区|郡)$", part) and not city:
+                    city = part
+            if date_text or city:
+                break
+
+        rec = out.setdefault(title, {"pref": cur_pref, "city": city,
+                                     "dateText": date_text, "fromList": True})
+        if not rec.get("dateText") and date_text:
+            rec["dateText"] = date_text
+        if not rec.get("city") and city:
+            rec["city"] = city
+    return out
+
+
+def category_members(cat: str, depth: int = 2, seen: set | None = None) -> set:
+    """カテゴリ配下の記事タイトルを再帰的に集める。"""
+    seen = seen if seen is not None else set()
+    titles: set = set()
+    cont = {}
+    while True:
+        r = wp({"action": "query", "list": "categorymembers", "cmtitle": cat,
+                "cmlimit": "500", "cmtype": "page|subcat", **cont})
+        for m in r.get("query", {}).get("categorymembers", []):
+            t = m["title"]
+            if t.startswith("Category:"):
+                if depth > 0 and t not in seen:
+                    seen.add(t)
+                    titles |= category_members(t, depth - 1, seen)
+            elif ":" not in t:
+                titles.add(t)
+        if "continue" in r:
+            cont = r["continue"]
+            time.sleep(0.15)
+        else:
+            break
+    return titles
+
+
+# ---------------------------------------------------------------------------
+# 2) 記事本文・座標の取得
+# ---------------------------------------------------------------------------
+def fetch_pages(titles: list[str]) -> dict:
+    """記事タイトル -> {text, lat, lng, qid, url}"""
+    result: dict[str, dict] = {}
+    B = 20                                    # extracts は 20 件/リクエストが上限
+    for i in range(0, len(titles), B):
+        batch = titles[i:i + B]
+        r = wp({"action": "query", "prop": "extracts|coordinates|pageprops|info",
+                "explaintext": 1, "exsectionformat": "plain",
+                "colimit": "max", "inprop": "url",
+                "titles": "|".join(batch)})
+        for p in r.get("query", {}).get("pages", []):
+            if p.get("missing"):
+                continue
+            co = (p.get("coordinates") or [{}])[0]
+            result[p["title"]] = {
+                "text": p.get("extract", "") or "",
+                "lat": co.get("lat"),
+                "lng": co.get("lon"),
+                "qid": (p.get("pageprops") or {}).get("wikibase_item"),
+                "url": p.get("fullurl") or
+                       "https://ja.wikipedia.org/wiki/" + urllib.parse.quote(p["title"]),
+            }
+        if (i // B) % 20 == 0:
+            print(f"    pages {i}/{len(titles)}", flush=True)
+        time.sleep(0.12)
+    return result
+
+
+def wikidata_coords(qids: list[str]) -> dict:
+    """Wikidata の QID -> (lat, lng)。P625 が無ければ P276/P131 を辿る。"""
+    out: dict[str, tuple] = {}
+    pending = [q for q in qids if q]
+    B = 50
+    hop2: dict[str, str] = {}                 # qid -> 参照先 qid
+    for i in range(0, len(pending), B):
+        batch = pending[i:i + B]
+        r = http_json(WD_API, {"action": "wbgetentities", "format": "json",
+                               "props": "claims", "ids": "|".join(batch)})
+        for qid, ent in (r.get("entities") or {}).items():
+            claims = ent.get("claims", {})
+            c = claims.get("P625")
+            if c:
+                try:
+                    v = c[0]["mainsnak"]["datavalue"]["value"]
+                    out[qid] = (v["latitude"], v["longitude"])
+                    continue
+                except Exception:                            # noqa: BLE001
+                    pass
+            for prop in ("P276", "P131", "P159"):
+                cc = claims.get(prop)
+                if cc:
+                    try:
+                        hop2[qid] = cc[0]["mainsnak"]["datavalue"]["value"]["id"]
+                        break
+                    except Exception:                        # noqa: BLE001
+                        pass
+        time.sleep(0.12)
+
+    # 1 ホップ先の座標
+    targets = sorted(set(hop2.values()))
+    coords2: dict[str, tuple] = {}
+    for i in range(0, len(targets), B):
+        batch = targets[i:i + B]
+        r = http_json(WD_API, {"action": "wbgetentities", "format": "json",
+                               "props": "claims", "ids": "|".join(batch)})
+        for qid, ent in (r.get("entities") or {}).items():
+            c = ent.get("claims", {}).get("P625")
+            if c:
+                try:
+                    v = c[0]["mainsnak"]["datavalue"]["value"]
+                    coords2[qid] = (v["latitude"], v["longitude"])
+                except Exception:                            # noqa: BLE001
+                    pass
+        time.sleep(0.12)
+    for qid, tgt in hop2.items():
+        if qid not in out and tgt in coords2:
+            out[qid] = coords2[tgt]
+    return out
+
+
+_geo_cache: dict[str, tuple] = {}
+
+
+def geocode(query: str) -> tuple | None:
+    """国土地理院ジオコーディング。市区町村名 → 座標。"""
+    if not query:
+        return None
+    if query in _geo_cache:
+        return _geo_cache[query]
+    r = http_json(GSI_GEOCODE, {"q": query}, retries=2)
+    coord = None
+    if isinstance(r, list) and r:
+        try:
+            lon, lat = r[0]["geometry"]["coordinates"]
+            if 122 < lon < 154 and 20 < lat < 46:            # 日本国内チェック
+                coord = (lat, lon)
+        except Exception:                                    # noqa: BLE001
+            pass
+    _geo_cache[query] = coord
+    time.sleep(0.25)
+    return coord
+
+
+# ---------------------------------------------------------------------------
+# 3) レコード組み立て
+# ---------------------------------------------------------------------------
+PREF_RE = re.compile("(" + "|".join(PREFS) + ")")
+CITY_RE = re.compile(r"([一-龥ぁ-んァ-ヶA-Za-zー]{1,8}?[市町村区])")
+
+
+def extract_place(text: str, hint_pref: str | None, hint_city: str) -> tuple:
+    pref = hint_pref
+    if not pref:
+        m = PREF_RE.search(text[:900])
+        pref = m.group(1) if m else None
+    city = hint_city
+    if not city:
+        m = CITY_RE.search(text[:900])
+        city = m.group(1) if m else ""
+    return pref, city
+
+
+def extract_schedule_text(text: str) -> str:
+    """本文から開催日らしい文を拾う。"""
+    head = text[:1500]
+    cues = ["開催日", "開催期間", "日程", "斎行", "例祭日", "毎年", "行われる", "催される"]
+    for sent in re.split(r"[。\n]", head):
+        if re.search(r"\d{1,2}月", sent) and any(c in sent for c in cues):
+            return sent.strip()[:120]
+    for sent in re.split(r"[。\n]", head):
+        if re.search(r"(\d{1,2}月\d{1,2}日|第[1-5一二三四五][月火水木金土日]曜|旧暦)", sent):
+            return sent.strip()[:120]
+    return ""
+
+
+def slugify(title: str) -> str:
+    return unicodedata.normalize("NFKC", title).replace(" ", "_")
+
+
+def build_record(title: str, page: dict, hint: dict) -> dict | None:
+    text = page.get("text") or ""
+    if len(text) < 60:
+        return None
+
+    date_text = hint.get("dateText") or extract_schedule_text(text)
+    occ, rules = D.occurrences(date_text, YEARS)
+    months = D.month_hint(rules)
+    if not months:
+        # 一覧に日付が無い記事は本文からもう一度だけ試す
+        alt = extract_schedule_text(text)
+        if alt and alt != date_text:
+            occ, rules = D.occurrences(alt, YEARS)
+            months = D.month_hint(rules)
+            if months:
+                date_text = alt
+    if not months:
+        return None                                # 開催時期不明は地図に置けない
+
+    tags = TX.tag_text(text)
+    tags += D.season_tags(months)
+    tags = sorted(set(tags))
+
+    has_desig = bool(set(tags) & TX.AGE_PROXY_TAGS)
+    founded, conf = W.estimate_founded(text, has_desig)
+    age = (THIS_YEAR - founded) if founded else None
+    if age is not None and age > 2500:
+        founded, age, conf = None, None, "proxy" if has_desig else "unknown"
+
+    if age is not None:
+        over50 = age >= 50
+    elif conf == "proxy":
+        over50 = True
+    else:
+        # 年不明。伝統色の強い語があれば 50 年以上とみなす（推定込みで広く拾う方針）
+        over50 = bool(re.search(r"(伝統|古く|昔から|古来|由緒|奉納|例大祭|例祭|神事|"
+                                r"江戸|明治|大正|継承|受け継)", text[:2500]))
+        conf = "assumed" if over50 else "unknown"
+
+    pref, city = extract_place(text, hint.get("pref"), hint.get("city", ""))
+    irregular = any(r["kind"] == "irregular" for r in rules)
+
+    return {
+        "id": slugify(title),
+        "name": title,
+        "pref": pref,
+        "city": city,
+        "lat": page.get("lat"),
+        "lng": page.get("lng"),
+        "qid": page.get("qid"),
+        "url": page.get("url"),
+        "summary": re.sub(r"\s+", " ", text[:180]).strip(),
+        "when": date_text,
+        "months": months,
+        "occ": occ[:8],
+        "tags": tags,
+        "founded": founded,
+        "age": age,
+        "ageConf": conf,          # exact / estimated / proxy / assumed / unknown
+        "over50": over50,
+        "irregular": irregular,
+        "src": "wikipedia",
+    }
+
+
+def load_manual() -> list[dict]:
+    """data/manual.csv を読む（Wikipedia に無い祭りの手入力用）。"""
+    path = os.path.join(DATA_DIR, "manual.csv")
+    if not os.path.exists(path):
+        return []
+    import csv
+    out = []
+    with open(path, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            name = (row.get("name") or "").strip()
+            if not name or name.startswith("#"):
+                continue
+            when = (row.get("when") or "").strip()
+            occ, rules = D.occurrences(when, YEARS)
+            months = D.month_hint(rules)
+            tags = [t.strip() for t in (row.get("tags") or "").split("|") if t.strip()]
+            tags += D.season_tags(months)
+            founded = int(row["founded"]) if (row.get("founded") or "").strip().isdigit() else None
+            lat = float(row["lat"]) if (row.get("lat") or "").strip() else None
+            lng = float(row["lng"]) if (row.get("lng") or "").strip() else None
+            out.append({
+                "id": "manual_" + slugify(name),
+                "name": name,
+                "pref": (row.get("pref") or "").strip() or None,
+                "city": (row.get("city") or "").strip(),
+                "lat": lat, "lng": lng, "qid": None,
+                "url": (row.get("url") or "").strip() or None,
+                "summary": (row.get("note") or "").strip(),
+                "when": when, "months": months, "occ": occ[:8],
+                "tags": sorted(set(tags)),
+                "founded": founded,
+                "age": (THIS_YEAR - founded) if founded else None,
+                "ageConf": "exact" if founded else "assumed",
+                "over50": (THIS_YEAR - founded >= 50) if founded else True,
+                "irregular": any(r["kind"] == "irregular" for r in rules),
+                "src": "manual",
+            })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--limit", type=int, default=0, help="処理件数の上限（テスト用）")
+    ap.add_argument("--no-geocode", action="store_true")
+    ap.add_argument("--no-categories", action="store_true")
+    args = ap.parse_args()
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    print("[1/6] 日本の祭一覧 を取得…", flush=True)
+    hints = fetch_list_article()
+    print(f"      {len(hints)} 件（開催日つき: "
+          f"{sum(1 for v in hints.values() if v['dateText'])}）")
+
+    if not args.no_categories:
+        print("[2/6] カテゴリを走査…", flush=True)
+        for cat in SEED_CATEGORIES:
+            got = category_members(cat, depth=2)
+            new = 0
+            for t in got:
+                if t not in hints and NAME_OK.search(t) and not NAME_NG.search(t):
+                    hints[t] = {"pref": None, "city": "", "dateText": "", "fromList": False}
+                    new += 1
+            print(f"      {cat}: +{new}（累計 {len(hints)}）", flush=True)
+    else:
+        print("[2/6] カテゴリ走査をスキップ")
+
+    titles = list(hints.keys())
+    if args.limit:
+        titles = titles[:args.limit]
+    print(f"[3/6] 記事本文を取得… ({len(titles)} 件)", flush=True)
+    pages = fetch_pages(titles)
+    print(f"      取得 {len(pages)} 件")
+
+    print("[4/6] レコード化…", flush=True)
+    records = []
+    for t in titles:
+        p = pages.get(t)
+        if not p:
+            continue
+        rec = build_record(t, p, hints.get(t, {}))
+        if rec:
+            records.append(rec)
+    print(f"      開催時期が判定できた {len(records)} 件")
+
+    print("[5/6] 座標を補完…", flush=True)
+    need_wd = [r["qid"] for r in records if r["lat"] is None and r["qid"]]
+    if need_wd:
+        wdc = wikidata_coords(sorted(set(need_wd)))
+        for r in records:
+            if r["lat"] is None and r["qid"] in wdc:
+                r["lat"], r["lng"] = wdc[r["qid"]]
+                r["geoSrc"] = "wikidata"
+        print(f"      Wikidata から {len(wdc)} 件")
+
+    if not args.no_geocode:
+        todo = [r for r in records if r["lat"] is None]
+        print(f"      ジオコーディング対象 {len(todo)} 件", flush=True)
+        for n, r in enumerate(todo):
+            q = f"{r['pref'] or ''}{r['city'] or ''}".strip()
+            if not q:
+                continue
+            c = geocode(q)
+            if c:
+                r["lat"], r["lng"] = c
+                r["geoSrc"] = "gsi-city"
+            if n % 100 == 0:
+                print(f"        {n}/{len(todo)}", flush=True)
+
+    records += load_manual()
+    records = [r for r in records if r["lat"] is not None]
+    records.sort(key=lambda r: (r["months"][0] if r["months"] else 13, r["name"]))
+    print(f"      座標つき {len(records)} 件")
+
+    print("[6/6] 書き出し…", flush=True)
+    payload = {
+        "generated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "years": YEARS,
+        "count": len(records),
+        "taxonomy": TX.tags_json(),
+        "festivals": records,
+    }
+    out = os.path.join(DATA_DIR, "festivals.json")
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    size = os.path.getsize(out) / 1024
+    print(f"      {out}  ({size:.0f} KB, {len(records)} 件)")
+
+    # 統計
+    from collections import Counter
+    print("\n--- 統計 ---")
+    print("50年以上:", sum(1 for r in records if r["over50"]))
+    print("確度:", dict(Counter(r["ageConf"] for r in records)))
+    tagc = Counter(t for r in records for t in r["tags"])
+    for tid, _ in tagc.most_common(15):
+        label = TX.TAGS.get(tid, (None, tid, None))[1]
+        print(f"  {label}: {tagc[tid]}")
+
+
+if __name__ == "__main__":
+    main()

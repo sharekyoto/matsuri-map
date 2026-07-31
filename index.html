@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>祭りマップ ― 50年以上つづく日本の祭り</title>
+<meta name="description" content="全国の50年以上つづく祭りを地図で。開催日・現在地からの距離・屋台/神輿/花火などの要素で絞り込めます。">
+<meta name="theme-color" content="#1b3a5c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<style>
+:root{
+  --ai:#1b3a5c; --ai-l:#2d5a86; --shu:#c9402f; --shu-l:#e05a45;
+  --kinari:#f7f3ea; --sumi:#22201d; --gray:#6f6a63; --line:#ded6c8;
+  --ok:#2f7d4f; --gold:#b08b2e;
+  --sidebar:360px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif;color:var(--sumi);background:var(--kinari)}
+button,input,select{font:inherit;color:inherit}
+#app{display:flex;height:100dvh;overflow:hidden}
+
+/* ---------- サイドバー ---------- */
+#side{width:var(--sidebar);flex:0 0 var(--sidebar);background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:1200}
+#brand{padding:12px 14px 10px;background:var(--ai);color:#fff}
+#brand h1{margin:0;font-size:17px;letter-spacing:.06em;font-weight:700}
+#brand p{margin:3px 0 0;font-size:11px;opacity:.75;line-height:1.5}
+#stats{padding:8px 14px;background:#fbf8f2;border-bottom:1px solid var(--line);font-size:12px;color:var(--gray);display:flex;justify-content:space-between;align-items:center;gap:8px}
+#stats b{color:var(--shu);font-size:15px}
+#filters{flex:1;overflow-y:auto;padding:4px 14px 90px;-webkit-overflow-scrolling:touch}
+
+.fs{border-bottom:1px solid var(--line);padding:11px 0}
+.fs>h3{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ai);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.fs>h3::before{content:"▾";font-size:10px;transition:transform .15s}
+.fs.collapsed>h3::before{transform:rotate(-90deg)}
+.fs.collapsed>.fsbody{display:none}
+.fsbody{display:flex;flex-wrap:wrap;gap:6px}
+
+.chip{border:1px solid var(--line);background:#fff;border-radius:14px;padding:5px 10px;font-size:12px;cursor:pointer;white-space:nowrap;transition:.12s;line-height:1.2}
+.chip:hover{border-color:var(--ai-l)}
+.chip.on{background:var(--ai);border-color:var(--ai);color:#fff}
+.chip.on.shu{background:var(--shu);border-color:var(--shu)}
+.chip .n{opacity:.55;font-size:10px;margin-left:3px}
+
+label.cb{display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 0;width:calc(50% - 3px);cursor:pointer}
+label.cb input{accent-color:var(--shu);width:15px;height:15px;flex:0 0 auto}
+label.cb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#search{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin:10px 0 2px}
+.row{display:flex;gap:6px;align-items:center;width:100%}
+.row input[type=date]{flex:1;min-width:0;padding:5px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+#geobtn{width:100%;padding:8px;border:1px solid var(--ai);background:#fff;color:var(--ai);border-radius:8px;font-size:12.5px;cursor:pointer;font-weight:600}
+#geobtn.on{background:var(--ai);color:#fff}
+#geostat{font-size:11px;color:var(--gray);margin-top:5px;width:100%}
+#reset{width:100%;margin-top:12px;padding:8px;border:1px solid var(--line);background:#fff;color:var(--gray);border-radius:8px;font-size:12px;cursor:pointer}
+
+/* ---------- メイン ---------- */
+#main{flex:1;position:relative;display:flex;flex-direction:column;min-width:0}
+#tabs{display:flex;background:#fff;border-bottom:1px solid var(--line);flex:0 0 auto}
+#tabs button{flex:1;padding:10px 4px;border:0;background:none;font-size:13px;color:var(--gray);cursor:pointer;border-bottom:2px solid transparent;font-weight:600}
+#tabs button.on{color:var(--shu);border-bottom-color:var(--shu)}
+#panes{flex:1;position:relative;min-height:0}
+.pane{position:absolute;inset:0;display:none;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.pane.on{display:block}
+#map{position:absolute;inset:0}
+
+/* ---------- リスト ---------- */
+#sortbar{position:sticky;top:0;background:#fbf8f2;border-bottom:1px solid var(--line);padding:7px 12px;display:flex;gap:6px;align-items:center;font-size:12px;z-index:5}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;margin:9px 12px;padding:11px 13px;cursor:pointer;transition:.12s}
+.card:hover{border-color:var(--ai-l);box-shadow:0 2px 10px rgba(27,58,92,.08)}
+.card h4{margin:0 0 4px;font-size:14.5px;font-weight:700;line-height:1.35}
+.meta{font-size:11.5px;color:var(--gray);display:flex;flex-wrap:wrap;gap:4px 10px;margin-bottom:6px}
+.date{color:var(--shu);font-weight:700;font-size:13px}
+.badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.b{font-size:10.5px;padding:2px 7px;border-radius:9px;background:#f0ece3;color:#5d564c;white-space:nowrap}
+.b.age{background:#fdf3dc;color:var(--gold);font-weight:700}
+.b.rank{background:#e8f0e9;color:var(--ok);font-weight:700}
+.b.est{background:#f4f2ef;color:#948d84}
+.summary{font-size:11.5px;color:var(--gray);line-height:1.6;margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#more{display:block;margin:14px auto 40px;padding:9px 26px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:13px}
+.empty{padding:60px 24px;text-align:center;color:var(--gray);font-size:13px;line-height:1.9}
+
+/* ---------- カレンダー ---------- */
+#cal{padding:12px}
+.mon{margin-bottom:18px}
+.mon h3{margin:0 0 8px;font-size:14px;color:var(--ai);border-bottom:2px solid var(--ai);padding-bottom:5px;display:flex;justify-content:space-between}
+.mon h3 span{font-size:11px;color:var(--gray);font-weight:400}
+.day{display:flex;gap:10px;padding:6px 0;border-bottom:1px dotted var(--line);font-size:12.5px;align-items:flex-start}
+.day .d{flex:0 0 62px;color:var(--shu);font-weight:700;font-size:12px;padding-top:1px}
+.day .items{flex:1;display:flex;flex-wrap:wrap;gap:4px 10px}
+.day a{color:var(--sumi);text-decoration:none;border-bottom:1px solid var(--line);cursor:pointer}
+.day a:hover{color:var(--shu);border-color:var(--shu)}
+
+/* ---------- ポップアップ ---------- */
+.leaflet-popup-content{margin:11px 13px;font-size:12.5px;line-height:1.65;min-width:200px}
+.leaflet-popup-content h4{margin:0 0 5px;font-size:14px}
+.pop-links{margin-top:8px;display:flex;gap:8px}
+.pop-links a{font-size:11.5px;color:var(--ai);text-decoration:none;border:1px solid var(--line);padding:3px 8px;border-radius:6px}
+.leaflet-popup-content-wrapper{border-radius:10px}
+.mk{border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+
+/* ---------- モバイル ---------- */
+#fabs{display:none}
+@media(max-width:820px){
+  :root{--sidebar:100%}
+  #app{flex-direction:column}
+  #side{position:fixed;inset:0;transform:translateX(-100%);transition:transform .22s;width:100%;flex:none;height:100dvh}
+  #side.open{transform:none}
+  #main{height:100dvh}
+  #fabs{display:flex;position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:1300;gap:8px}
+  #fabs button{background:var(--shu);color:#fff;border:0;border-radius:22px;padding:11px 18px;font-size:13.5px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.28);cursor:pointer}
+  #closeside{position:absolute;top:9px;right:10px;background:rgba(255,255,255,.18);border:0;color:#fff;border-radius:16px;padding:5px 13px;font-size:13px;cursor:pointer}
+  label.cb{width:calc(50% - 3px)}
+}
+@media(min-width:821px){#closeside{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside id="side">
+    <div id="brand">
+      <h1>祭りマップ</h1>
+      <p>50年以上つづく日本の祭りを、日付と距離で探す</p>
+      <button id="closeside">閉じる</button>
+    </div>
+    <div id="stats"><span id="hit">読み込み中…</span><span id="gen"></span></div>
+
+    <div id="filters">
+      <input id="search" type="search" placeholder="祭り名・地名で検索">
+
+      <div class="fs" data-k="when"><h3>いつ行く</h3><div class="fsbody">
+        <button class="chip shu on" data-when="soon">これから</button>
+        <button class="chip shu" data-when="weekend">今週末</button>
+        <button class="chip shu" data-when="30">30日以内</button>
+        <button class="chip shu" data-when="90">3ヶ月以内</button>
+        <button class="chip shu" data-when="all">通年</button>
+        <div class="row" style="margin-top:7px">
+          <input type="date" id="d1"><span style="font-size:11px;color:var(--gray)">〜</span><input type="date" id="d2">
+        </div>
+        <div class="fsbody" id="monthchips" style="margin-top:7px"></div>
+      </div></div>
+
+      <div class="fs" data-k="dist"><h3>どこから</h3><div class="fsbody">
+        <button id="geobtn">現在地を使う</button>
+        <div id="geostat">未取得（地図の中心を基準にできます）</div>
+        <div class="fsbody" style="margin-top:7px">
+          <button class="chip" data-dist="10">10km</button>
+          <button class="chip" data-dist="30">30km</button>
+          <button class="chip" data-dist="50">50km</button>
+          <button class="chip" data-dist="100">100km</button>
+          <button class="chip" data-dist="200">200km</button>
+          <button class="chip on" data-dist="0">指定なし</button>
+        </div>
+      </div></div>
+
+      <div class="fs" data-k="age"><h3>続いている年数</h3><div class="fsbody" id="agechips"></div></div>
+
+      <div id="tagfilters"></div>
+
+      <div class="fs" data-k="pref"><h3>都道府県</h3><div class="fsbody" id="prefchips"></div></div>
+
+      <button id="reset">すべての条件をリセット</button>
+      <p style="font-size:10.5px;color:var(--gray);line-height:1.75;margin:14px 0 30px">
+        データ出典: 日本語版ウィキペディア（CC BY-SA 4.0）、Wikidata（CC0）、国土地理院。<br>
+        開催日は年によって変わります。「ごろ」表示は推定です。<b>お出かけ前に必ず公式情報をご確認ください。</b>
+      </p>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="tabs">
+      <button data-pane="map" class="on">地図</button>
+      <button data-pane="list">リスト</button>
+      <button data-pane="cal">カレンダー</button>
+    </div>
+    <div id="panes">
+      <div class="pane on" id="pane-map"><div id="map"></div></div>
+      <div class="pane" id="pane-list">
+        <div id="sortbar">
+          並び順
+          <button class="chip on" data-sort="date">日付が近い順</button>
+          <button class="chip" data-sort="dist">近い順</button>
+          <button class="chip" data-sort="age">古い順</button>
+        </div>
+        <div id="listbody"></div>
+      </div>
+      <div class="pane" id="pane-cal"><div id="cal"></div></div>
+    </div>
+  </main>
+
+  <div id="fabs">
+    <button id="openside">絞り込み</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   状態
+   ===================================================================== */
+const S = {
+  all: [], tax: null, generated: "",
+  when: "soon", d1: null, d2: null, months: new Set(),
+  origin: null, originLabel: "", dist: 0,
+  age: 50, tags: new Set(), prefs: new Set(), q: "",
+  sort: "date", page: 1, PER: 60,
+  filtered: []
+};
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const today = new Date(); today.setHours(0,0,0,0);
+const iso = d => d.toISOString().slice(0,10);
+const parseD = s => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
+
+/* =====================================================================
+   地図
+   ===================================================================== */
+const map = L.map("map", { zoomControl:true, preferCanvas:true }).setView([36.5,138.2], 5);
+L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png", {
+  attribution:'地図: <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom:18
+}).addTo(map);
+const cluster = L.markerClusterGroup({
+  maxClusterRadius: 55, spiderfyOnMaxZoom:true, chunkedLoading:true,
+  iconCreateFunction(c){
+    const n=c.getChildCount();
+    const size = n<10?32 : n<50?38 : n<200?45 : 52;
+    return L.divIcon({html:`<div style="background:rgba(201,64,47,.85);color:#fff;width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${n<100?13:12}px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)">${n}</div>`,
+      className:"", iconSize:[size,size]});
+  }
+}).addTo(map);
+let originMarker = null, originCircle = null;
+
+/* =====================================================================
+   ユーティリティ
+   ===================================================================== */
+function haversine(a,b,c,d){
+  const R=6371, r=Math.PI/180;
+  const dLat=(c-a)*r, dLon=(d-b)*r;
+  const x=Math.sin(dLat/2)**2 + Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+function nextOcc(f, from){
+  if(!f.occ || !f.occ.length) return null;
+  for(const o of f.occ) if(parseD(o.end) >= from) return o;
+  return null;
+}
+function fmtOcc(o){
+  if(!o) return "開催日未定";
+  const s=parseD(o.start), e=parseD(o.end);
+  const wd="日月火水木金土"[s.getDay()];
+  const base = `${s.getMonth()+1}/${s.getDate()}(${wd})`;
+  const range = (o.start!==o.end) ? `${base}〜${e.getMonth()+1}/${e.getDate()}` : base;
+  const yr = s.getFullYear()!==today.getFullYear() ? `${s.getFullYear()}年 ` : "";
+  return yr + range + (o.precision==="approx" ? " ごろ" : "");
+}
+function daysUntil(o){ return o ? Math.round((parseD(o.start)-today)/864e5) : 9999; }
+function tagLabel(id){ const t=S.tax.tags.find(x=>x.id===id); return t?t.label:id; }
+const RANK=new Set(["unesco","kuni","kunisentaku","ken","shi","sandai"]);
+function ageBadge(f){
+  if(f.age && f.ageConf==="exact")     return {t:`${f.age}年つづく（${f.founded}年〜）`, c:"age"};
+  if(f.age && f.ageConf==="estimated") return {t:`約${f.age}年つづく（推定）`, c:"age"};
+  if(f.ageConf==="proxy")              return {t:"文化財指定・50年以上", c:"age"};
+  if(f.ageConf==="assumed")            return {t:"50年以上（推定）", c:"est"};
+  return null;
+}
+
+/* =====================================================================
+   フィルタ
+   ===================================================================== */
+function windowRange(){
+  if(S.d1 || S.d2) return [S.d1?parseD(S.d1):today, S.d2?parseD(S.d2):new Date(2100,0,1)];
+  if(S.when==="all")  return [new Date(2000,0,1), new Date(2100,0,1)];
+  if(S.when==="soon") return [today, new Date(2100,0,1)];
+  if(S.when==="weekend"){
+    const a=new Date(today); a.setDate(a.getDate() + ((6-a.getDay())%7));
+    const b=new Date(a); b.setDate(b.getDate()+1);
+    return [a,b];
+  }
+  const n=+S.when; const b=new Date(today); b.setDate(b.getDate()+n);
+  return [today,b];
+}
+
+function apply(){
+  const [wa,wb] = windowRange();
+  const out=[];
+  for(const f of S.all){
+    if(S.age && !(f.over50 && (S.age===50 || (f.age||0)>=S.age))) continue;
+    if(S.prefs.size && !S.prefs.has(f.pref)) continue;
+    if(S.tags.size){ let ok=true; for(const t of S.tags) if(!f.tags.includes(t)){ok=false;break;} if(!ok) continue; }
+    if(S.months.size && !f.months.some(m=>S.months.has(m))) continue;
+    if(S.q){
+      const hay = f.name + (f.pref||"") + (f.city||"") + (f.summary||"");
+      if(!hay.includes(S.q)) continue;
+    }
+    // 期間
+    let occ=null;
+    if(S.when==="all" && !S.d1 && !S.d2){ occ = nextOcc(f, today) || f.occ[0] || null; }
+    else{
+      for(const o of (f.occ||[])){
+        if(parseD(o.end) >= wa && parseD(o.start) <= wb){ occ=o; break; }
+      }
+      if(!occ) continue;
+    }
+    // 距離
+    let d=null;
+    if(S.origin){
+      d = haversine(S.origin[0],S.origin[1],f.lat,f.lng);
+      if(S.dist && d > S.dist) continue;
+    }
+    out.push({...f, _occ:occ, _d:d});
+  }
+
+  if(S.sort==="date")      out.sort((a,b)=> daysUntil(a._occ)-daysUntil(b._occ) || a.name.localeCompare(b.name,"ja"));
+  else if(S.sort==="dist") out.sort((a,b)=> (a._d??9e9)-(b._d??9e9));
+  else                     out.sort((a,b)=> (a.founded??9999)-(b.founded??9999));
+
+  S.filtered = out; S.page = 1;
+  $("#hit").innerHTML = `<b>${out.length.toLocaleString()}</b> 件`;
+  renderMap(); renderList(); renderCal(); updateCounts();
+}
+
+/* =====================================================================
+   描画: 地図
+   ===================================================================== */
+function renderMap(){
+  cluster.clearLayers();
+  const ms = S.filtered.slice(0, 4000).map(f=>{
+    const rank = f.tags.includes("unesco") ? "#b08b2e"
+               : f.tags.includes("kuni")   ? "#c9402f"
+               : f.tags.includes("ken")||f.tags.includes("shi") ? "#2d5a86" : "#6f6a63";
+    const r = f.tags.includes("unesco")||f.tags.includes("sandai") ? 8 : 6;
+    const m = L.circleMarker([f.lat,f.lng], {
+      radius:r, color:"#fff", weight:1.5, fillColor:rank, fillOpacity:.92, className:"mk"
+    });
+    m.bindPopup(()=>popupHTML(f), {maxWidth:280});
+    m._f = f;
+    return m;
+  });
+  cluster.addLayers(ms);
+}
+function popupHTML(f){
+  const ab=ageBadge(f);
+  const ranks=f.tags.filter(t=>RANK.has(t)).map(t=>`<span class="b rank">${tagLabel(t)}</span>`).join("");
+  const els=f.tags.filter(t=>!RANK.has(t)&&!["spring","summer","autumn","winter"].includes(t))
+                  .slice(0,7).map(t=>`<span class="b">${tagLabel(t)}</span>`).join("");
+  return `<h4>${f.name}</h4>
+    <div style="color:#6f6a63;font-size:11.5px">${(f.pref||"")}${f.city||""}</div>
+    <div class="date" style="margin-top:4px">${fmtOcc(f._occ)}</div>
+    ${f.when?`<div style="font-size:11px;color:#6f6a63">${f.when}</div>`:""}
+    ${f._d!=null?`<div style="font-size:11.5px;color:#2d5a86;margin-top:3px">現在地から ${f._d.toFixed(1)} km</div>`:""}
+    <div class="badges">${ab?`<span class="b ${ab.c}">${ab.t}</span>`:""}${ranks}${els}</div>
+    <div class="pop-links">
+      ${f.url?`<a href="${f.url}" target="_blank" rel="noopener">詳細</a>`:""}
+      <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lng}" target="_blank" rel="noopener">経路</a>
+    </div>`;
+}
+
+/* =====================================================================
+   描画: リスト
+   ===================================================================== */
+function renderList(){
+  const box=$("#listbody");
+  const rows=S.filtered.slice(0, S.page*S.PER);
+  if(!rows.length){
+    box.innerHTML=`<div class="empty">条件に合う祭りが見つかりませんでした。<br>期間を「通年」にするか、絞り込みを減らしてみてください。</div>`;
+    return;
+  }
+  box.innerHTML = rows.map(f=>{
+    const ab=ageBadge(f);
+    const ranks=f.tags.filter(t=>RANK.has(t)).map(t=>`<span class="b rank">${tagLabel(t)}</span>`).join("");
+    const els=f.tags.filter(t=>!RANK.has(t)&&!["spring","summer","autumn","winter"].includes(t))
+                    .slice(0,6).map(t=>`<span class="b">${tagLabel(t)}</span>`).join("");
+    return `<div class="card" data-id="${f.id}">
+      <h4>${f.name}</h4>
+      <div class="meta">
+        <span>${(f.pref||"")}${f.city||""}</span>
+        ${f._d!=null?`<span>${f._d.toFixed(1)} km</span>`:""}
+        ${f.irregular?`<span>不定期開催</span>`:""}
+      </div>
+      <div class="date">${fmtOcc(f._occ)}${f.when?` <span style="color:#6f6a63;font-weight:400;font-size:11px">（${f.when}）</span>`:""}</div>
+      <div class="badges">${ab?`<span class="b ${ab.c}">${ab.t}</span>`:""}${ranks}${els}</div>
+      ${f.summary?`<div class="summary">${f.summary}</div>`:""}
+    </div>`;
+  }).join("") + (S.filtered.length > rows.length
+      ? `<button id="more">さらに表示（残り ${S.filtered.length-rows.length} 件）</button>` : "");
+
+  $$("#listbody .card").forEach(el=>el.onclick=()=>focusFestival(el.dataset.id));
+  const more=$("#more"); if(more) more.onclick=()=>{ S.page++; renderList(); };
+}
+
+function focusFestival(id){
+  const f=S.filtered.find(x=>x.id===id); if(!f) return;
+  showPane("map");
+  map.setView([f.lat,f.lng], 12, {animate:true});
+  setTimeout(()=>{
+    L.popup({maxWidth:280}).setLatLng([f.lat,f.lng]).setContent(popupHTML(f)).openOn(map);
+  }, 320);
+}
+
+/* =====================================================================
+   描画: カレンダー
+   ===================================================================== */
+function renderCal(){
+  const byMonth = new Map();
+  for(const f of S.filtered.slice(0,1500)){
+    if(!f._occ) continue;
+    const k=f._occ.start.slice(0,7);
+    if(!byMonth.has(k)) byMonth.set(k,new Map());
+    const days=byMonth.get(k);
+    if(!days.has(f._occ.start)) days.set(f._occ.start,[]);
+    days.get(f._occ.start).push(f);
+  }
+  const keys=[...byMonth.keys()].sort().slice(0,14);
+  if(!keys.length){ $("#cal").innerHTML=`<div class="empty">表示できる開催日がありません。</div>`; return; }
+  $("#cal").innerHTML = keys.map(k=>{
+    const [y,m]=k.split("-");
+    const days=[...byMonth.get(k).entries()].sort();
+    const total=days.reduce((s,[,v])=>s+v.length,0);
+    return `<div class="mon"><h3>${y}年 ${+m}月<span>${total} 件</span></h3>` +
+      days.map(([d,fs])=>{
+        const dd=parseD(d), wd="日月火水木金土"[dd.getDay()];
+        const col = dd.getDay()===0?"#c9402f":dd.getDay()===6?"#2d5a86":"#22201d";
+        return `<div class="day"><div class="d" style="color:${col}">${+d.slice(8)}日(${wd})</div>
+          <div class="items">${fs.slice(0,40).map(f=>
+            `<a data-id="${f.id}">${f.name}<span style="color:#6f6a63;font-size:10.5px">${f.pref?" / "+f.pref:""}</span></a>`).join("")}
+          ${fs.length>40?`<span style="color:#6f6a63">ほか${fs.length-40}件</span>`:""}</div></div>`;
+      }).join("") + `</div>`;
+  }).join("");
+  $$("#cal a[data-id]").forEach(a=>a.onclick=()=>focusFestival(a.dataset.id));
+}
+
+/* =====================================================================
+   フィルタUIの生成
+   ===================================================================== */
+function buildFilters(){
+  // 月チップ
+  $("#monthchips").innerHTML = Array.from({length:12},(_,i)=>
+    `<button class="chip" data-month="${i+1}" style="padding:4px 8px">${i+1}月</button>`).join("");
+  $$("[data-month]").forEach(b=>b.onclick=()=>{
+    const m=+b.dataset.month;
+    if(S.months.has(m)){S.months.delete(m);b.classList.remove("on");}
+    else{S.months.add(m);b.classList.add("on");}
+    apply();
+  });
+
+  // 年数チップ
+  $("#agechips").innerHTML = S.tax.ageBuckets.map(a=>
+    `<button class="chip shu ${a.years===50?"on":""}" data-age="${a.years}">${a.label}</button>`).join("");
+  $$("[data-age]").forEach(b=>b.onclick=()=>{
+    $$("[data-age]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); S.age=+b.dataset.age; apply();
+  });
+
+  // タググループ
+  const html = S.tax.groups.filter(g=>g.id!=="season").map(g=>{
+    const tags=S.tax.tags.filter(t=>t.group===g.id);
+    if(!tags.length) return "";
+    return `<div class="fs ${g.id==="element"||g.id==="rank"?"":"collapsed"}" data-k="${g.id}">
+      <h3>${g.label}</h3><div class="fsbody">${tags.map(t=>
+        `<label class="cb"><input type="checkbox" data-tag="${t.id}"><span title="${t.label}">${t.label}</span></label>`
+      ).join("")}</div></div>`;
+  }).join("");
+  $("#tagfilters").innerHTML = html;
+  $$("[data-tag]").forEach(cb=>cb.onchange=()=>{
+    cb.checked ? S.tags.add(cb.dataset.tag) : S.tags.delete(cb.dataset.tag);
+    apply();
+  });
+
+  // 都道府県
+  const prefs=[...new Set(S.all.map(f=>f.pref).filter(Boolean))];
+  $("#prefchips").innerHTML = prefs.map(p=>
+    `<button class="chip" data-pref="${p}" style="padding:4px 7px;font-size:11px">${p.replace(/[都府県]$/,"")}</button>`).join("");
+  $$("[data-pref]").forEach(b=>b.onclick=()=>{
+    const p=b.dataset.pref;
+    if(S.prefs.has(p)){S.prefs.delete(p);b.classList.remove("on");}
+    else{S.prefs.add(p);b.classList.add("on");}
+    apply();
+  });
+
+  // 折りたたみ
+  $$(".fs > h3").forEach(h=>h.onclick=()=>h.parentElement.classList.toggle("collapsed"));
+}
+
+// チェックボックスの横に「その条件だけ足したら何件か」を出す
+function updateCounts(){
+  const base=S.filtered;
+  $$("[data-tag]").forEach(cb=>{
+    const t=cb.dataset.tag;
+    const n = S.tags.has(t) ? base.length : base.filter(f=>f.tags.includes(t)).length;
+    const sp=cb.nextElementSibling;
+    sp.textContent = tagLabel(t) + (n?` (${n})`:"");
+    cb.parentElement.style.opacity = n ? 1 : .35;
+  });
+}
+
+/* =====================================================================
+   イベント
+   ===================================================================== */
+$$("[data-when]").forEach(b=>b.onclick=()=>{
+  $$("[data-when]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.when=b.dataset.when;
+  S.d1=S.d2=null; $("#d1").value=""; $("#d2").value=""; apply();
+});
+$("#d1").onchange = $("#d2").onchange = ()=>{
+  S.d1=$("#d1").value||null; S.d2=$("#d2").value||null; apply();
+};
+$$("[data-dist]").forEach(b=>b.onclick=()=>{
+  $$("[data-dist]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.dist=+b.dataset.dist;
+  if(S.dist && !S.origin) useMapCenter();
+  drawOrigin(); apply();
+});
+$$("[data-sort]").forEach(b=>b.onclick=()=>{
+  $$("[data-sort]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.sort=b.dataset.sort;
+  if(S.sort==="dist" && !S.origin) useMapCenter();
+  apply();
+});
+$("#search").oninput = e=>{ S.q=e.target.value.trim(); clearTimeout(window._t); window._t=setTimeout(apply,180); };
+
+$("#geobtn").onclick = ()=>{
+  if(!navigator.geolocation){ $("#geostat").textContent="この端末では現在地を取得できません"; return; }
+  $("#geostat").textContent="取得中…";
+  navigator.geolocation.getCurrentPosition(p=>{
+    S.origin=[p.coords.latitude,p.coords.longitude]; S.originLabel="現在地";
+    $("#geobtn").classList.add("on"); $("#geostat").textContent=
+      `現在地: ${S.origin[0].toFixed(3)}, ${S.origin[1].toFixed(3)}`;
+    map.setView(S.origin, 9); drawOrigin(); apply();
+  }, ()=>{ $("#geostat").textContent="取得できませんでした。地図を動かして「地図の中心」を使えます。"; },
+  {enableHighAccuracy:false, timeout:10000, maximumAge:600000});
+};
+function useMapCenter(){
+  const c=map.getCenter(); S.origin=[c.lat,c.lng]; S.originLabel="地図の中心";
+  $("#geostat").textContent=`基準: 地図の中心 (${c.lat.toFixed(3)}, ${c.lng.toFixed(3)})`;
+  drawOrigin();
+}
+function drawOrigin(){
+  if(originMarker) map.removeLayer(originMarker);
+  if(originCircle) map.removeLayer(originCircle);
+  if(!S.origin) return;
+  originMarker = L.circleMarker(S.origin,{radius:7,color:"#fff",weight:2,fillColor:"#1b3a5c",fillOpacity:1}).addTo(map);
+  if(S.dist) originCircle = L.circle(S.origin,{radius:S.dist*1000,color:"#1b3a5c",weight:1,fillOpacity:.05,dashArray:"5,5"}).addTo(map);
+}
+map.on("moveend", ()=>{ if(S.originLabel==="地図の中心" && S.dist===0 && S.sort!=="dist") return; });
+
+$("#reset").onclick = ()=>{
+  S.when="soon"; S.d1=S.d2=null; S.months.clear(); S.dist=0; S.age=50;
+  S.tags.clear(); S.prefs.clear(); S.q=""; S.sort="date";
+  $("#search").value=""; $("#d1").value=""; $("#d2").value="";
+  $$("[data-tag]").forEach(c=>c.checked=false);
+  $$(".chip").forEach(c=>c.classList.remove("on"));
+  $('[data-when="soon"]').classList.add("on");
+  $('[data-dist="0"]').classList.add("on");
+  $('[data-age="50"]').classList.add("on");
+  $('[data-sort="date"]').classList.add("on");
+  drawOrigin(); apply();
+};
+
+$$("#tabs button").forEach(b=>b.onclick=()=>showPane(b.dataset.pane));
+function showPane(k){
+  $$("#tabs button").forEach(x=>x.classList.toggle("on", x.dataset.pane===k));
+  $$(".pane").forEach(p=>p.classList.toggle("on", p.id==="pane-"+k));
+  if(k==="map") setTimeout(()=>map.invalidateSize(),60);
+}
+$("#openside").onclick  = ()=>$("#side").classList.add("open");
+$("#closeside").onclick = ()=>$("#side").classList.remove("open");
+
+/* =====================================================================
+   起動
+   ===================================================================== */
+async function boot(){
+  let data=null;
+  for(const url of ["data/festivals.json","data/seed.json"]){
+    try{
+      const r=await fetch(url,{cache:"no-cache"});
+      if(r.ok){ data=await r.json(); break; }
+    }catch(e){}
+  }
+  if(!data){
+    $("#hit").textContent="データを読み込めませんでした";
+    $("#listbody").innerHTML=`<div class="empty">data/festivals.json が見つかりません。<br>
+      <code>python3 scripts/build.py</code> を実行してデータを生成してください。</div>`;
+    return;
+  }
+  S.all = data.festivals; S.tax = data.taxonomy; S.generated = data.generated || "";
+  $("#gen").textContent = S.generated ? "更新 " + S.generated.slice(0,10) : "";
+  buildFilters();
+  apply();
+}
+boot();
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>

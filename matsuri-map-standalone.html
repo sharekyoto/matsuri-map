@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>祭りマップ ― 50年以上つづく日本の祭り</title>
+<meta name="description" content="全国の50年以上つづく祭りを地図で。開催日・現在地からの距離・屋台/神輿/花火などの要素で絞り込めます。">
+<meta name="theme-color" content="#1b3a5c">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<style>
+:root{
+  --ai:#1b3a5c; --ai-l:#2d5a86; --shu:#c9402f; --shu-l:#e05a45;
+  --kinari:#f7f3ea; --sumi:#22201d; --gray:#6f6a63; --line:#ded6c8;
+  --ok:#2f7d4f; --gold:#b08b2e;
+  --sidebar:360px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif;color:var(--sumi);background:var(--kinari)}
+button,input,select{font:inherit;color:inherit}
+#app{display:flex;height:100dvh;overflow:hidden}
+
+/* ---------- サイドバー ---------- */
+#side{width:var(--sidebar);flex:0 0 var(--sidebar);background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:1200}
+#brand{padding:12px 14px 10px;background:var(--ai);color:#fff}
+#brand h1{margin:0;font-size:17px;letter-spacing:.06em;font-weight:700}
+#brand p{margin:3px 0 0;font-size:11px;opacity:.75;line-height:1.5}
+#stats{padding:8px 14px;background:#fbf8f2;border-bottom:1px solid var(--line);font-size:12px;color:var(--gray);display:flex;justify-content:space-between;align-items:center;gap:8px}
+#stats b{color:var(--shu);font-size:15px}
+#filters{flex:1;overflow-y:auto;padding:4px 14px 90px;-webkit-overflow-scrolling:touch}
+
+.fs{border-bottom:1px solid var(--line);padding:11px 0}
+.fs>h3{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ai);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.fs>h3::before{content:"▾";font-size:10px;transition:transform .15s}
+.fs.collapsed>h3::before{transform:rotate(-90deg)}
+.fs.collapsed>.fsbody{display:none}
+.fsbody{display:flex;flex-wrap:wrap;gap:6px}
+
+.chip{border:1px solid var(--line);background:#fff;border-radius:14px;padding:5px 10px;font-size:12px;cursor:pointer;white-space:nowrap;transition:.12s;line-height:1.2}
+.chip:hover{border-color:var(--ai-l)}
+.chip.on{background:var(--ai);border-color:var(--ai);color:#fff}
+.chip.on.shu{background:var(--shu);border-color:var(--shu)}
+.chip .n{opacity:.55;font-size:10px;margin-left:3px}
+
+label.cb{display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 0;width:calc(50% - 3px);cursor:pointer}
+label.cb input{accent-color:var(--shu);width:15px;height:15px;flex:0 0 auto}
+label.cb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#search{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin:10px 0 2px}
+.row{display:flex;gap:6px;align-items:center;width:100%}
+.row input[type=date]{flex:1;min-width:0;padding:5px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+#geobtn{width:100%;padding:8px;border:1px solid var(--ai);background:#fff;color:var(--ai);border-radius:8px;font-size:12.5px;cursor:pointer;font-weight:600}
+#geobtn.on{background:var(--ai);color:#fff}
+#geostat{font-size:11px;color:var(--gray);margin-top:5px;width:100%}
+#reset{width:100%;margin-top:12px;padding:8px;border:1px solid var(--line);background:#fff;color:var(--gray);border-radius:8px;font-size:12px;cursor:pointer}
+
+/* ---------- メイン ---------- */
+#main{flex:1;position:relative;display:flex;flex-direction:column;min-width:0}
+#tabs{display:flex;background:#fff;border-bottom:1px solid var(--line);flex:0 0 auto}
+#tabs button{flex:1;padding:10px 4px;border:0;background:none;font-size:13px;color:var(--gray);cursor:pointer;border-bottom:2px solid transparent;font-weight:600}
+#tabs button.on{color:var(--shu);border-bottom-color:var(--shu)}
+#panes{flex:1;position:relative;min-height:0}
+.pane{position:absolute;inset:0;display:none;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.pane.on{display:block}
+#map{position:absolute;inset:0}
+
+/* ---------- リスト ---------- */
+#sortbar{position:sticky;top:0;background:#fbf8f2;border-bottom:1px solid var(--line);padding:7px 12px;display:flex;gap:6px;align-items:center;font-size:12px;z-index:5}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;margin:9px 12px;padding:11px 13px;cursor:pointer;transition:.12s}
+.card:hover{border-color:var(--ai-l);box-shadow:0 2px 10px rgba(27,58,92,.08)}
+.card h4{margin:0 0 4px;font-size:14.5px;font-weight:700;line-height:1.35}
+.meta{font-size:11.5px;color:var(--gray);display:flex;flex-wrap:wrap;gap:4px 10px;margin-bottom:6px}
+.date{color:var(--shu);font-weight:700;font-size:13px}
+.badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.b{font-size:10.5px;padding:2px 7px;border-radius:9px;background:#f0ece3;color:#5d564c;white-space:nowrap}
+.b.age{background:#fdf3dc;color:var(--gold);font-weight:700}
+.b.rank{background:#e8f0e9;color:var(--ok);font-weight:700}
+.b.est{background:#f4f2ef;color:#948d84}
+.summary{font-size:11.5px;color:var(--gray);line-height:1.6;margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#more{display:block;margin:14px auto 40px;padding:9px 26px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:13px}
+.empty{padding:60px 24px;text-align:center;color:var(--gray);font-size:13px;line-height:1.9}
+
+/* ---------- カレンダー ---------- */
+#cal{padding:12px}
+.mon{margin-bottom:18px}
+.mon h3{margin:0 0 8px;font-size:14px;color:var(--ai);border-bottom:2px solid var(--ai);padding-bottom:5px;display:flex;justify-content:space-between}
+.mon h3 span{font-size:11px;color:var(--gray);font-weight:400}
+.day{display:flex;gap:10px;padding:6px 0;border-bottom:1px dotted var(--line);font-size:12.5px;align-items:flex-start}
+.day .d{flex:0 0 62px;color:var(--shu);font-weight:700;font-size:12px;padding-top:1px}
+.day .items{flex:1;display:flex;flex-wrap:wrap;gap:4px 10px}
+.day a{color:var(--sumi);text-decoration:none;border-bottom:1px solid var(--line);cursor:pointer}
+.day a:hover{color:var(--shu);border-color:var(--shu)}
+
+/* ---------- ポップアップ ---------- */
+.leaflet-popup-content{margin:11px 13px;font-size:12.5px;line-height:1.65;min-width:200px}
+.leaflet-popup-content h4{margin:0 0 5px;font-size:14px}
+.pop-links{margin-top:8px;display:flex;gap:8px}
+.pop-links a{font-size:11.5px;color:var(--ai);text-decoration:none;border:1px solid var(--line);padding:3px 8px;border-radius:6px}
+.leaflet-popup-content-wrapper{border-radius:10px}
+.mk{border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+
+/* ---------- モバイル ---------- */
+#fabs{display:none}
+@media(max-width:820px){
+  :root{--sidebar:100%}
+  #app{flex-direction:column}
+  #side{position:fixed;inset:0;transform:translateX(-100%);transition:transform .22s;width:100%;flex:none;height:100dvh}
+  #side.open{transform:none}
+  #main{height:100dvh}
+  #fabs{display:flex;position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:1300;gap:8px}
+  #fabs button{background:var(--shu);color:#fff;border:0;border-radius:22px;padding:11px 18px;font-size:13.5px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.28);cursor:pointer}
+  #closeside{position:absolute;top:9px;right:10px;background:rgba(255,255,255,.18);border:0;color:#fff;border-radius:16px;padding:5px 13px;font-size:13px;cursor:pointer}
+  label.cb{width:calc(50% - 3px)}
+}
+@media(min-width:821px){#closeside{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside id="side">
+    <div id="brand">
+      <h1>祭りマップ</h1>
+      <p>50年以上つづく日本の祭りを、日付と距離で探す</p>
+      <button id="closeside">閉じる</button>
+    </div>
+    <div id="stats"><span id="hit">読み込み中…</span><span id="gen"></span></div>
+
+    <div id="filters">
+      <input id="search" type="search" placeholder="祭り名・地名で検索">
+
+      <div class="fs" data-k="when"><h3>いつ行く</h3><div class="fsbody">
+        <button class="chip shu on" data-when="soon">これから</button>
+        <button class="chip shu" data-when="weekend">今週末</button>
+        <button class="chip shu" data-when="30">30日以内</button>
+        <button class="chip shu" data-when="90">3ヶ月以内</button>
+        <button class="chip shu" data-when="all">通年</button>
+        <div class="row" style="margin-top:7px">
+          <input type="date" id="d1"><span style="font-size:11px;color:var(--gray)">〜</span><input type="date" id="d2">
+        </div>
+        <div class="fsbody" id="monthchips" style="margin-top:7px"></div>
+      </div></div>
+
+      <div class="fs" data-k="dist"><h3>どこから</h3><div class="fsbody">
+        <button id="geobtn">現在地を使う</button>
+        <div id="geostat">未取得（地図の中心を基準にできます）</div>
+        <div class="fsbody" style="margin-top:7px">
+          <button class="chip" data-dist="10">10km</button>
+          <button class="chip" data-dist="30">30km</button>
+          <button class="chip" data-dist="50">50km</button>
+          <button class="chip" data-dist="100">100km</button>
+          <button class="chip" data-dist="200">200km</button>
+          <button class="chip on" data-dist="0">指定なし</button>
+        </div>
+      </div></div>
+
+      <div class="fs" data-k="age"><h3>続いている年数</h3><div class="fsbody" id="agechips"></div></div>
+
+      <div id="tagfilters"></div>
+
+      <div class="fs" data-k="pref"><h3>都道府県</h3><div class="fsbody" id="prefchips"></div></div>
+
+      <button id="reset">すべての条件をリセット</button>
+      <p style="font-size:10.5px;color:var(--gray);line-height:1.75;margin:14px 0 30px">
+        データ出典: 日本語版ウィキペディア（CC BY-SA 4.0）、Wikidata（CC0）、国土地理院。<br>
+        開催日は年によって変わります。「ごろ」表示は推定です。<b>お出かけ前に必ず公式情報をご確認ください。</b>
+      </p>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="tabs">
+      <button data-pane="map" class="on">地図</button>
+      <button data-pane="list">リスト</button>
+      <button data-pane="cal">カレンダー</button>
+    </div>
+    <div id="panes">
+      <div class="pane on" id="pane-map"><div id="map"></div></div>
+      <div class="pane" id="pane-list">
+        <div id="sortbar">
+          並び順
+          <button class="chip on" data-sort="date">日付が近い順</button>
+          <button class="chip" data-sort="dist">近い順</button>
+          <button class="chip" data-sort="age">古い順</button>
+        </div>
+        <div id="listbody"></div>
+      </div>
+      <div class="pane" id="pane-cal"><div id="cal"></div></div>
+    </div>
+  </main>
+
+  <div id="fabs">
+    <button id="openside">絞り込み</button>
+  </div>
+</div>
+
+<script id="embedded-data" type="application/json">{"generated":"2026-07-31T02:33:09+00:00","years":[2026,2027,2028],"count":115,"note":"手作業でキュレーションした初期データ。scripts/build.py を実行すると数千件の完全版に置き換わります。","taxonomy":{"groups":[{"id":"element","label":"祭りの要素"},{"id":"art","label":"伝統芸能・神事"},{"id":"character","label":"祭りの性格"},{"id":"rank","label":"規模・格付け"},{"id":"practical","label":"アクセス・実用"},{"id":"season","label":"季節・時間帯"}],"tags":[{"id":"yatai","group":"element","label":"屋台・露店"},{"id":"mikoshi","group":"element","label":"神輿"},{"id":"dashi","group":"element","label":"山車・曳山"},{"id":"hanabi","group":"element","label":"花火"},{"id":"chochin","group":"element","label":"提灯・灯籠"},{"id":"fukubiki","group":"element","label":"福引・餅まき"},{"id":"gourmet","group":"element","label":"地元グルメ・振る舞い"},{"id":"parade","group":"element","label":"行列・仮装"},{"id":"kiriko","group":"element","label":"キリコ・大灯籠"},{"id":"kagura","group":"art","label":"神楽"},{"id":"shishi","group":"art","label":"獅子舞"},{"id":"bonodori","group":"art","label":"盆踊り"},{"id":"dengaku","group":"art","label":"田楽・田植神事"},{"id":"nou","group":"art","label":"能・狂言・歌舞伎"},{"id":"yabusame","group":"art","label":"流鏑馬・馬事"},{"id":"taiko","group":"art","label":"太鼓・囃子"},{"id":"odori","group":"art","label":"踊り・よさこい"},{"id":"hadaka","group":"character","label":"裸祭り"},{"id":"hi","group":"character","label":"火祭り"},{"id":"kenka","group":"character","label":"けんか祭り"},{"id":"mizu","group":"character","label":"水・海の祭り"},{"id":"kisai","group":"character","label":"奇祭"},{"id":"yuki","group":"character","label":"雪の祭り"},{"id":"hana","group":"character","label":"花・自然の祭り"},{"id":"toshikoshi","group":"character","label":"正月・年越し行事"},{"id":"unesco","group":"rank","label":"ユネスコ無形文化遺産"},{"id":"kuni","group":"rank","label":"国指定重要無形民俗文化財"},{"id":"kunisentaku","group":"rank","label":"国選択無形民俗文化財"},{"id":"ken","group":"rank","label":"県指定文化財"},{"id":"shi","group":"rank","label":"市町村指定文化財"},{"id":"sandai","group":"rank","label":"日本三大○○"},{"id":"big","group":"rank","label":"大規模（10万人以上）"},{"id":"night","group":"practical","label":"夜間開催"},{"id":"paid_seat","group":"practical","label":"有料観覧席あり"},{"id":"kids","group":"practical","label":"子ども中心・子ども歓迎"},{"id":"station","group":"practical","label":"駅から徒歩圏"},{"id":"spring","group":"season","label":"春（3-5月）"},{"id":"summer","group":"season","label":"夏（6-8月）"},{"id":"autumn","group":"season","label":"秋（9-11月）"},{"id":"winter","group":"season","label":"冬（12-2月）"}],"ageBuckets":[{"years":50,"label":"50年以上"},{"years":100,"label":"100年以上"},{"years":200,"label":"200年以上"},{"years":300,"label":"300年以上"},{"years":500,"label":"500年以上"}]},"festivals":[{"id":"seed_あまめはぎ","name":"あまめはぎ","pref":"石川県","city":"輪島市","lat":37.39,"lng":136.9,"qid":null,"url":"https://ja.wikipedia.org/wiki/あまめはぎ","summary":"面をつけた来訪神が家を訪ね、怠け者を戒める。","when":"1月上旬 - 2月上旬","months":[1,2],"occ":[{"start":"2026-01-01","end":"2026-02-10","precision":"approx"},{"start":"2027-01-01","end":"2027-02-10","precision":"approx"},{"start":"2028-01-01","end":"2028-02-10","precision":"approx"}],"tags":["kids","kisai","kuni","toshikoshi","unesco","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_チャッキラコ","name":"チャッキラコ","pref":"神奈川県","city":"三浦市","lat":35.14,"lng":139.62,"qid":null,"url":"https://ja.wikipedia.org/wiki/チャッキラコ","summary":"少女たちが踊る小正月の祝福芸。ユネスコ「風流踊」。","when":"1月15日","months":[1],"occ":[{"start":"2026-01-15","end":"2026-01-15","precision":"exact"},{"start":"2027-01-15","end":"2027-01-15","precision":"exact"},{"start":"2028-01-15","end":"2028-01-15","precision":"exact"}],"tags":["kids","kuni","odori","unesco","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_世田谷ボロ市","name":"世田谷ボロ市","pref":"東京都","city":"世田谷区","lat":35.646,"lng":139.648,"qid":null,"url":"https://ja.wikipedia.org/wiki/世田谷ボロ市","summary":"430年以上続く歳の市。700店の露店が並ぶ。","when":"1月15日・16日と12月15日・16日","months":[1,12],"occ":[{"start":"2026-01-15","end":"2026-01-16","precision":"exact"},{"start":"2026-12-15","end":"2026-12-16","precision":"exact"},{"start":"2027-01-15","end":"2027-01-16","precision":"exact"},{"start":"2027-12-15","end":"2027-12-16","precision":"exact"},{"start":"2028-01-15","end":"2028-01-16","precision":"exact"},{"start":"2028-12-15","end":"2028-12-16","precision":"exact"}],"tags":["gourmet","ken","winter","yatai"],"founded":1578,"age":448,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_利賀のはつうま","name":"利賀のはつうま","pref":"富山県","city":"南砺市","lat":36.46,"lng":136.96,"qid":null,"url":"https://ja.wikipedia.org/wiki/利賀のはつうま","summary":"子どもが家々を回って祝福する山村の小正月行事。","when":"1月上旬の土曜日・日曜日","months":[1],"occ":[{"start":"2026-01-03","end":"2026-01-04","precision":"exact"},{"start":"2027-01-02","end":"2027-01-03","precision":"exact"},{"start":"2028-01-01","end":"2028-01-02","precision":"exact"}],"tags":["kids","kunisentaku","toshikoshi","winter","yuki"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_国府宮はだか祭","name":"国府宮はだか祭","pref":"愛知県","city":"稲沢市","lat":35.247,"lng":136.802,"qid":null,"url":"https://ja.wikipedia.org/wiki/国府宮はだか祭","summary":"数千人の裸男が神男に触れようともみ合う。","when":"旧暦1月13日","months":[1],"occ":[{"start":"2026-03-01","end":"2026-03-01","precision":"approx"},{"start":"2027-02-18","end":"2027-02-18","precision":"approx"},{"start":"2028-02-07","end":"2028-02-07","precision":"approx"}],"tags":["big","hadaka","kisai","kuni","winter","yatai"],"founded":767,"age":1259,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_婿投げ・墨塗り","name":"婿投げ・墨塗り","pref":"新潟県","city":"十日町市","lat":37.13,"lng":138.76,"qid":null,"url":"https://ja.wikipedia.org/wiki/婿投げ・墨塗り","summary":"新婚の婿を雪の斜面から投げ落とし、灰と墨を塗り合う小正月行事。","when":"1月15日","months":[1],"occ":[{"start":"2026-01-15","end":"2026-01-15","precision":"exact"},{"start":"2027-01-15","end":"2027-01-15","precision":"exact"},{"start":"2028-01-15","end":"2028-01-15","precision":"exact"}],"tags":["kisai","winter","yuki"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_西宮神社十日えびす（福男選び）","name":"西宮神社十日えびす（福男選び）","pref":"兵庫県","city":"西宮市","lat":34.737,"lng":135.34,"qid":null,"url":"https://ja.wikipedia.org/wiki/西宮神社十日えびす","summary":"開門神事の福男選び。商売繁盛の熊手が並ぶ。","when":"1月9日-11日","months":[1],"occ":[{"start":"2026-01-09","end":"2026-01-11","precision":"exact"},{"start":"2027-01-09","end":"2027-01-11","precision":"exact"},{"start":"2028-01-09","end":"2028-01-11","precision":"exact"}],"tags":["big","fukubiki","gourmet","station","winter","yatai"],"founded":1600,"age":426,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_野沢温泉の道祖神祭り","name":"野沢温泉の道祖神祭り","pref":"長野県","city":"野沢温泉村","lat":36.92,"lng":138.45,"qid":null,"url":"https://ja.wikipedia.org/wiki/野沢温泉の道祖神祭り","summary":"社殿をめぐる火の攻防戦。日本三大火祭り。","when":"1月15日","months":[1],"occ":[{"start":"2026-01-15","end":"2026-01-15","precision":"exact"},{"start":"2027-01-15","end":"2027-01-15","precision":"exact"},{"start":"2028-01-15","end":"2028-01-15","precision":"exact"}],"tags":["hi","kisai","kuni","night","winter","yuki"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_黒石寺蘇民祭","name":"黒石寺蘇民祭","pref":"岩手県","city":"奥州市","lat":39.07,"lng":141.19,"qid":null,"url":"https://ja.wikipedia.org/wiki/黒石寺蘇民祭","summary":"日本三大奇祭のひとつとされた裸の争奪戦。2024年に本祭を終了。","when":"旧暦1月7日","months":[1],"occ":[{"start":"2026-02-23","end":"2026-02-23","precision":"approx"},{"start":"2027-02-12","end":"2027-02-12","precision":"approx"},{"start":"2028-02-01","end":"2028-02-01","precision":"approx"}],"tags":["hadaka","hi","kisai","kuni","night","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_さっぽろ雪まつり","name":"さっぽろ雪まつり","pref":"北海道","city":"札幌市","lat":43.0592,"lng":141.3547,"qid":null,"url":"https://ja.wikipedia.org/wiki/さっぽろ雪まつり","summary":"大通公園を中心に大雪像が並ぶ。1950年に地元中高生が6基の雪像を作ったのが始まり。","when":"2月上旬の7日間","months":[2],"occ":[{"start":"2026-02-01","end":"2026-02-10","precision":"approx"},{"start":"2027-02-01","end":"2027-02-10","precision":"approx"},{"start":"2028-02-01","end":"2028-02-10","precision":"approx"}],"tags":["big","night","station","winter","yatai","yuki"],"founded":1950,"age":76,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_でくまわし","name":"でくまわし","pref":"石川県","city":"白山市","lat":36.34,"lng":136.68,"qid":null,"url":"https://ja.wikipedia.org/wiki/でくまわし","summary":"山あいの集落に伝わる素朴な人形浄瑠璃。","when":"2月第2・第3土曜日・日曜日","months":[2],"occ":[{"start":"2026-02-01","end":"2026-02-28","precision":"approx"},{"start":"2027-02-01","end":"2027-02-28","precision":"approx"},{"start":"2028-02-01","end":"2028-02-29","precision":"approx"}],"tags":["kuni","nou","winter","yuki"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_なまはげ柴灯まつり","name":"なまはげ柴灯まつり","pref":"秋田県","city":"男鹿市","lat":39.92,"lng":139.73,"qid":null,"url":"https://ja.wikipedia.org/wiki/なまはげ柴灯まつり","summary":"真山神社の柴灯火にナマハゲが現れる。","when":"2月第2金曜日から3日間","months":[2],"occ":[{"start":"2026-02-13","end":"2026-02-15","precision":"exact"},{"start":"2027-02-12","end":"2027-02-14","precision":"exact"},{"start":"2028-02-11","end":"2028-02-13","precision":"exact"}],"tags":["hi","kisai","kuni","night","paid_seat","unesco","winter"],"founded":1964,"age":62,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_上桧木内の紙風船上げ","name":"上桧木内の紙風船上げ","pref":"秋田県","city":"仙北市","lat":39.78,"lng":140.53,"qid":null,"url":"https://ja.wikipedia.org/wiki/上桧木内の紙風船上げ","summary":"武者絵の巨大な紙風船を夜空に上げる小さな山里の行事。","when":"2月10日","months":[2],"occ":[{"start":"2026-02-10","end":"2026-02-10","precision":"exact"},{"start":"2027-02-10","end":"2027-02-10","precision":"exact"},{"start":"2028-02-10","end":"2028-02-10","precision":"exact"}],"tags":["chochin","kids","night","winter","yuki"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_勝山左義長まつり","name":"勝山左義長まつり","pref":"福井県","city":"勝山市","lat":36.06,"lng":136.5,"qid":null,"url":"https://ja.wikipedia.org/wiki/勝山左義長まつり","summary":"12基の櫓で浮かれ太鼓、最後にどんど焼き。","when":"2月最終土曜日・日曜日","months":[2],"occ":[{"start":"2026-02-28","end":"2026-03-01","precision":"exact"},{"start":"2027-02-27","end":"2027-02-28","precision":"exact"},{"start":"2028-02-26","end":"2028-02-27","precision":"exact"}],"tags":["hi","ken","night","taiko","winter","yatai","yuki"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_米川の水かぶり","name":"米川の水かぶり","pref":"宮城県","city":"登米市","lat":38.75,"lng":141.26,"qid":null,"url":"https://ja.wikipedia.org/wiki/米川の水かぶり","summary":"藁装束の男たちが 水を浴びて火伏せを祈る。ユネスコ「来訪神」。","when":"2月初午","months":[2],"occ":[{"start":"2026-02-01","end":"2026-02-28","precision":"approx"},{"start":"2027-02-01","end":"2027-02-28","precision":"approx"},{"start":"2028-02-01","end":"2028-02-29","precision":"approx"}],"tags":["kisai","kuni","mizu","unesco","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_西大寺会陽","name":"西大寺会陽","pref":"岡山県","city":"岡山市","lat":34.652,"lng":134.008,"qid":null,"url":"https://ja.wikipedia.org/wiki/西大寺会陽","summary":"1万人の裸群が宝木を奪い合う日本三大奇祭。","when":"2月第3土曜日","months":[2],"occ":[{"start":"2026-02-21","end":"2026-02-21","precision":"exact"},{"start":"2027-02-20","end":"2027-02-20","precision":"exact"},{"start":"2028-02-19","end":"2028-02-19","precision":"exact"}],"tags":["big","hadaka","kisai","kuni","night","winter","yatai"],"founded":1510,"age":516,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_高千穂の夜神楽","name":"高千穂の夜神楽","pref":"宮崎県","city":"高千穂町","lat":32.712,"lng":131.308,"qid":null,"url":"https://ja.wikipedia.org/wiki/高千穂の夜神楽","summary":"集落の民家で夜通し33番を舞う。","when":"11月中旬 - 2月上旬","months":[2,11],"occ":[{"start":"2026-11-11","end":"2027-02-10","precision":"approx"},{"start":"2027-11-11","end":"2028-02-10","precision":"approx"},{"start":"2028-11-11","end":"2029-02-10","precision":"approx"}],"tags":["autumn","gourmet","kagura","kuni","night","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_鳥羽の火祭り","name":"鳥羽の火祭り","pref":"愛知県","city":"西尾市","lat":34.78,"lng":137.02,"qid":null,"url":"https://ja.wikipedia.org/wiki/鳥羽の火祭り","summary":"燃えさかる大松明に 男たちが飛び込み、年の豊凶を占う。","when":"2月第2日曜日","months":[2],"occ":[{"start":"2026-02-08","end":"2026-02-08","precision":"exact"},{"start":"2027-02-14","end":"2027-02-14","precision":"exact"},{"start":"2028-02-13","end":"2028-02-13","precision":"exact"}],"tags":["hadaka","hi","kisai","kuni","night","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_黒川能（王祇祭）","name":"黒川能（王祇祭）","pref":"山形県","city":"鶴岡市","lat":38.65,"lng":139.83,"qid":null,"url":"https://ja.wikipedia.org/wiki/黒川能","summary":"氏子の家で夜通し演じられる村の能。500年以上続くとされる。","when":"2月1日-2日","months":[2],"occ":[{"start":"2026-02-01","end":"2026-02-02","precision":"exact"},{"start":"2027-02-01","end":"2027-02-02","precision":"exact"},{"start":"2028-02-01","end":"2028-02-02","precision":"exact"}],"tags":["kuni","night","nou","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_東大寺修二会（お水取り）","name":"東大寺修二会（お水取り）","pref":"奈良県","city":"奈良市","lat":34.689,"lng":135.844,"qid":null,"url":"https://ja.wikipedia.org/wiki/東大寺修二会","summary":"1270年以上不退の行法。お松明の火の粉が舞う。","when":"3月1日-14日","months":[3],"occ":[{"start":"2026-03-01","end":"2026-03-14","precision":"exact"},{"start":"2027-03-01","end":"2027-03-14","precision":"exact"},{"start":"2028-03-01","end":"2028-03-14","precision":"exact"}],"tags":["big","hi","night","spring"],"founded":752,"age":1274,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_阿蘇神社火振り神事","name":"阿蘇神社火振り神事","pref":"熊本県","city":"阿蘇市","lat":32.947,"lng":131.117,"qid":null,"url":"https://ja.wikipedia.org/wiki/阿蘇神社火振り神事","summary":"茅の松明を振り回して姫神を迎える。","when":"3月中旬","months":[3],"occ":[{"start":"2026-03-11","end":"2026-03-20","precision":"approx"},{"start":"2027-03-11","end":"2027-03-20","precision":"approx"},{"start":"2028-03-11","end":"2028-03-20","precision":"approx"}],"tags":["hi","ken","night","spring"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_くらやみ祭","name":"くらやみ祭","pref":"東京都","city":"府中市","lat":35.67,"lng":139.479,"qid":null,"url":"https://ja.wikipedia.org/wiki/くらやみ祭","summary":"大國魂神社の例大祭。暗闇の中を8基の神輿が渡御した。","when":"4月30日-5月6日","months":[4,5],"occ":[{"start":"2026-04-30","end":"2026-05-06","precision":"exact"},{"start":"2027-04-30","end":"2027-05-06","precision":"exact"},{"start":"2028-04-30","end":"2028-05-06","precision":"exact"}],"tags":["big","dashi","kuni","mikoshi","night","spring","taiko","yatai"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_四天王寺聖霊会の舞楽","name":"四天王寺聖霊会の舞楽","pref":"大阪府","city":"大阪市","lat":34.654,"lng":135.516,"qid":null,"url":"https://ja.wikipedia.org/wiki/四天王寺聖霊会の舞楽","summary":"聖徳太子の忌日に舞われる天王寺舞楽。","when":"4月22日","months":[4],"occ":[{"start":"2026-04-22","end":"2026-04-22","precision":"exact"},{"start":"2027-04-22","end":"2027-04-22","precision":"exact"},{"start":"2028-04-22","end":"2028-04-22","precision":"exact"}],"tags":["kuni","nou","spring"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_御柱祭","name":"御柱祭","pref":"長野県","city":"諏訪市","lat":36.04,"lng":138.12,"qid":null,"url":"https://ja.wikipedia.org/wiki/御柱祭","summary":"16本のモミの巨木を山から曳き出す。次回は2028年。","when":"4月-5月（7年に一度・寅と申の年）","months":[4,5],"occ":[{"start":"2026-04-01","end":"2026-05-31","precision":"approx"},{"start":"2027-04-01","end":"2027-05-31","precision":"approx"},{"start":"2028-04-01","end":"2028-05-31","precision":"approx"}],"tags":["big","kisai","kuni","paid_seat","parade","spring"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":true,"src":"seed"},{"id":"seed_遠州横須賀三熊野神社大祭","name":"遠州横須賀三熊野神社大祭","pref":"静岡県","city":"掛川市","lat":34.67,"lng":138.09,"qid":null,"url":"https://ja.wikipedia.org/wiki/遠州横須賀三熊野神社大祭","summary":"江戸型の一本柱万度型の祢里13台。","when":"4月第1金曜日から3日間","months":[4],"occ":[{"start":"2026-04-03","end":"2026-04-05","precision":"exact"},{"start":"2027-04-02","end":"2027-04-04","precision":"exact"},{"start":"2028-04-07","end":"2028-04-09","precision":"exact"}],"tags":["dashi","ken","night","spring","taiko","yatai"],"founded":1697,"age":329,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_長浜曳山祭","name":"長浜曳山祭","pref":"滋賀県","city":"長浜市","lat":35.381,"lng":136.273,"qid":null,"url":"https://ja.wikipedia.org/wiki/長浜曳山祭","summary":"曳山の舞台で子ども歌舞伎が演じられる。","when":"4月13日-16日","months":[4],"occ":[{"start":"2026-04-13","end":"2026-04-16","precision":"exact"},{"start":"2027-04-13","end":"2027-04-16","precision":"exact"},{"start":"2028-04-13","end":"2028-04-16","precision":"exact"}],"tags":["dashi","kids","kuni","nou","spring","unesco"],"founded":1574,"age":452,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_高山祭（春の山王祭・秋の八幡祭）","name":"高山祭（春の山王祭・秋の八幡祭）","pref":"岐阜県","city":"高山市","lat":36.142,"lng":137.254,"qid":null,"url":"https://ja.wikipedia.org/wiki/高山祭","summary":"日本三大美祭。からくり奉納と夜祭の曳き揃え。","when":"4月14日・15日 / 10月9日・10日","months":[4,10],"occ":[{"start":"2026-04-14","end":"2026-04-15","precision":"exact"},{"start":"2026-10-09","end":"2026-10-10","precision":"exact"},{"start":"2027-04-14","end":"2027-04-15","precision":"exact"},{"start":"2027-10-09","end":"2027-10-10","precision":"exact"},{"start":"2028-04-14","end":"2028-04-15","precision":"exact"},{"start":"2028-10-09","end":"2028-10-10","precision":"exact"}],"tags":["autumn","big","chochin","dashi","kuni","night","sandai","spring","unesco","yatai"],"founded":1652,"age":374,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_ホーランエンヤ（美保関）","name":"ホーランエンヤ（美保関）","pref":"島根県","city":"松江市","lat":35.47,"lng":133.05,"qid":null,"url":"https://ja.wikipedia.org/wiki/ホーランエンヤ","summary":"櫂伝馬船が大橋川を渡る日本三大船神事。","when":"5月（12年に一度）","months":[5],"occ":[{"start":"2026-05-01","end":"2026-05-31","precision":"approx"},{"start":"2027-05-01","end":"2027-05-31","precision":"approx"},{"start":"2028-05-01","end":"2028-05-31","precision":"approx"}],"tags":["big","ken","mizu","parade","spring"],"founded":1648,"age":378,"ageConf":"exact","over50":true,"irregular":true,"src":"seed"},{"id":"seed_三国祭","name":"三国祭","pref":"福井県","city":"坂井市","lat":36.22,"lng":136.15,"qid":null,"url":"https://ja.wikipedia.org/wiki/三国祭","summary":"高さ6.5mの武者人形山車が港町を練る。","when":"5月19日-21日","months":[5],"occ":[{"start":"2026-05-19","end":"2026-05-21","precision":"exact"},{"start":"2027-05-19","end":"2027-05-21","precision":"exact"},{"start":"2028-05-19","end":"2028-05-21","precision":"exact"}],"tags":["dashi","ken","night","spring","yatai"],"founded":1665,"age":361,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_三社祭","name":"三社祭","pref":"東京都","city":"台東区","lat":35.7148,"lng":139.7967,"qid":null,"url":"https://ja.wikipedia.org/wiki/三社祭","summary":"浅草神社の例大祭。約100基の町神輿が浅草を埋める。","when":"5月第3金曜日から3日間","months":[5],"occ":[{"start":"2026-05-15","end":"2026-05-17","precision":"exact"},{"start":"2027-05-21","end":"2027-05-23","precision":"exact"},{"start":"2028-05-19","end":"2028-05-21","precision":"exact"}],"tags":["big","mikoshi","night","odori","spring","station","yatai"],"founded":1312,"age":714,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_博多どんたく港まつり","name":"博多どんたく港まつり","pref":"福岡県","city":"福岡市","lat":33.59,"lng":130.401,"qid":null,"url":"https://ja.wikipedia.org/wiki/博多どんたく港まつり","summary":"しゃもじを打ち鳴らす松囃子。動員200万人。","when":"5月3日・4日","months":[5],"occ":[{"start":"2026-05-03","end":"2026-05-04","precision":"exact"},{"start":"2027-05-03","end":"2027-05-04","precision":"exact"},{"start":"2028-05-03","end":"2028-05-04","precision":"exact"}],"tags":["big","odori","parade","spring","station","yatai"],"founded":1179,"age":847,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_和歌祭","name":"和歌祭","pref":"和歌山県","city":"和歌山市","lat":34.21,"lng":135.18,"qid":null,"url":"https://ja.wikipedia.org/wiki/和歌祭","summary":"紀州東照宮の百段石段を神輿が駆け下りる。","when":"5月中旬の日曜日","months":[5],"occ":[{"start":"2026-05-17","end":"2026-05-17","precision":"exact"},{"start":"2027-05-16","end":"2027-05-16","precision":"exact"},{"start":"2028-05-14","end":"2028-05-14","precision":"exact"}],"tags":["ken","mikoshi","parade","spring","yatai"],"founded":1622,"age":404,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_大垣まつり","name":"大垣まつり","pref":"岐阜県","city":"大垣市","lat":35.36,"lng":136.61,"qid":null,"url":"https://ja.wikipedia.org/wiki/大垣まつり","summary":"13両の軕（やま）とからくり。","when":"5月15日直近の土曜日・日曜日","months":[5],"occ":[{"start":"2026-05-15","end":"2026-05-15","precision":"exact"},{"start":"2027-05-15","end":"2027-05-15","precision":"exact"},{"start":"2028-05-15","end":"2028-05-15","precision":"exact"}],"tags":["dashi","kuni","night","spring","unesco","yatai"],"founded":1648,"age":378,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_日光東照宮春季例大祭（百物揃千人武者行列）","name":"日光東照宮春季例大祭（百物揃千人武者行列）","pref":"栃木県","city":"日光市","lat":36.758,"lng":139.599,"qid":null,"url":"https://ja.wikipedia.org/wiki/日光東照宮春季例大祭","summary":"1200人の武者行列が家康の神霊を送る。","when":"5月17日-18日","months":[5],"occ":[{"start":"2026-05-17","end":"2026-05-18","precision":"exact"},{"start":"2027-05-17","end":"2027-05-18","precision":"exact"},{"start":"2028-05-17","end":"2028-05-18","precision":"exact"}],"tags":["kuni","mikoshi","parade","spring"],"founded":1617,"age":409,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_相馬野馬追","name":"相馬野馬追","pref":"福島県","city":"南相馬市","lat":37.642,"lng":140.957,"qid":null,"url":"https://ja.wikipedia.org/wiki/相馬野馬追","summary":"甲冑武者500騎の神旗争奪戦。平将門の軍事訓練が起源とされる。","when":"5月最終土曜日から3日間","months":[5],"occ":[{"start":"2026-05-30","end":"2026-06-01","precision":"exact"},{"start":"2027-05-29","end":"2027-05-31","precision":"exact"},{"start":"2028-05-27","end":"2028-05-29","precision":"exact"}],"tags":["big","kuni","paid_seat","parade","spring","yabusame"],"founded":940,"age":1086,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_神田祭","name":"神田祭","pref":"東京都","city":"千代田区","lat":35.702,"lng":139.768,"qid":null,"url":"https://ja.wikipedia.org/wiki/神田祭","summary":"日本三大祭・江戸三大祭。神幸祭と200基の町神輿。","when":"5月中旬（隔年）","months":[5],"occ":[{"start":"2026-05-11","end":"2026-05-20","precision":"approx"},{"start":"2027-05-11","end":"2027-05-20","precision":"approx"},{"start":"2028-05-11","end":"2028-05-20","precision":"approx"}],"tags":["big","mikoshi","parade","sandai","spring","station","yatai"],"founded":1600,"age":426,"ageConf":"exact","over50":true,"irregular":true,"src":"seed"},{"id":"seed_葵祭","name":"葵祭","pref":"京都府","city":"京都市","lat":35.04,"lng":135.76,"qid":null,"url":"https://ja.wikipedia.org/wiki/葵祭","summary":"平安装束の路頭の儀が御所から下鴨・上賀茂へ。","when":"5月15日","months":[5],"occ":[{"start":"2026-05-15","end":"2026-05-15","precision":"exact"},{"start":"2027-05-15","end":"2027-05-15","precision":"exact"},{"start":"2028-05-15","end":"2028-05-15","precision":"exact"}],"tags":["big","kuni","paid_seat","parade","spring","yabusame"],"founded":567,"age":1459,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_青柏祭","name":"青柏祭","pref":"石川県","city":"七尾市","lat":37.043,"lng":136.967,"qid":null,"url":"https://ja.wikipedia.org/wiki/青柏祭","summary":"高さ12m・重さ20tのでか山3台。日本一大きな曳山。","when":"5月3日-5日","months":[5],"occ":[{"start":"2026-05-03","end":"2026-05-05","precision":"exact"},{"start":"2027-05-03","end":"2027-05-05","precision":"exact"},{"start":"2028-05-03","end":"2028-05-05","precision":"exact"}],"tags":["dashi","kuni","spring","unesco","yatai"],"founded":1150,"age":876,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_高岡御車山祭","name":"高岡御車山祭","pref":"富山県","city":"高岡市","lat":36.754,"lng":137.026,"qid":null,"url":"https://ja.wikipedia.org/wiki/高岡御車山祭","summary":"7基の御車山。加賀前田家ゆかりの絢爛な曳山。","when":"5月1日","months":[5],"occ":[{"start":"2026-05-01","end":"2026-05-01","precision":"exact"},{"start":"2027-05-01","end":"2027-05-01","precision":"exact"},{"start":"2028-05-01","end":"2028-05-01","precision":"exact"}],"tags":["dashi","kuni","spring","unesco","yatai"],"founded":1609,"age":417,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_チャグチャグ馬コ","name":"チャグチャグ馬コ","pref":"岩手県","city":"滝沢市","lat":39.735,"lng":141.077,"qid":null,"url":"https://ja.wikipedia.org/wiki/チャグチャグ馬コ","summary":"鈴を鳴らす飾り馬が15kmを行進する。","when":"6月第2土曜日","months":[6],"occ":[{"start":"2026-06-13","end":"2026-06-13","precision":"exact"},{"start":"2027-06-12","end":"2027-06-12","precision":"exact"},{"start":"2028-06-10","end":"2028-06-10","precision":"exact"}],"tags":["kids","kunisentaku","parade","summer","yabusame"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_三次の鵜飼","name":"三次の鵜飼","pref":"広島県","city":"三次市","lat":34.8,"lng":132.85,"qid":null,"url":"https://ja.wikipedia.org/wiki/三次の鵜飼","summary":"400年以上続く夏の風物詩。","when":"6月-9月","months":[6,9],"occ":[{"start":"2026-06-01","end":"2026-09-29","precision":"approx"},{"start":"2027-06-01","end":"2027-09-29","precision":"approx"},{"start":"2028-06-01","end":"2028-09-29","precision":"approx"}],"tags":["autumn","chochin","mizu","night","summer"],"founded":1596,"age":430,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_因幡の菖蒲綱引き","name":"因幡の菖蒲綱引き","pref":"鳥取県","city":"鳥取市","lat":35.501,"lng":134.235,"qid":null,"url":"https://ja.wikipedia.org/wiki/因幡の菖蒲綱引き","summary":"菖蒲を編み込んだ大綱を子どもと大人が引き合う。国指定重要無形民俗文化財。","when":"6月5日ごろ","months":[6],"occ":[{"start":"2026-06-05","end":"2026-06-05","precision":"exact"},{"start":"2027-06-05","end":"2027-06-05","precision":"exact"},{"start":"2028-06-05","end":"2028-06-05","precision":"exact"}],"tags":["kids","kisai","kuni","summer"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_山王祭","name":"山王祭","pref":"東京都","city":"千代田区","lat":35.674,"lng":139.74,"qid":null,"url":"https://ja.wikipedia.org/wiki/山王祭","summary":"日枝神社の神幸祭。江戸城内に入った天下祭。","when":"6月中旬（隔年）","months":[6],"occ":[{"start":"2026-06-11","end":"2026-06-20","precision":"approx"},{"start":"2027-06-11","end":"2027-06-20","precision":"approx"},{"start":"2028-06-11","end":"2028-06-20","precision":"approx"}],"tags":["mikoshi","parade","sandai","station","summer"],"founded":1681,"age":345,"ageConf":"exact","over50":true,"irregular":true,"src":"seed"},{"id":"seed_熱田まつり（尚武祭）","name":"熱田まつり（尚武祭）","pref":"愛知県","city":"名古屋市","lat":35.128,"lng":136.908,"qid":null,"url":"https://ja.wikipedia.org/wiki/熱田まつり","summary":"365個の提灯をつけた献灯まきわらと花火。","when":"6月5日","months":[6],"occ":[{"start":"2026-06-05","end":"2026-06-05","precision":"exact"},{"start":"2027-06-05","end":"2027-06-05","precision":"exact"},{"start":"2028-06-05","end":"2028-06-05","precision":"exact"}],"tags":["big","chochin","hanabi","night","station","summer","yatai"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_管絃祭","name":"管絃祭","pref":"広島県","city":"廿日市市","lat":34.296,"lng":132.32,"qid":null,"url":"https://ja.wikipedia.org/wiki/管絃祭","summary":"厳島神社の御座船が夜の海を渡る。","when":"旧暦6月17日","months":[6],"occ":[{"start":"2026-07-30","end":"2026-07-30","precision":"approx"},{"start":"2027-07-20","end":"2027-07-20","precision":"approx"},{"start":"2028-08-07","end":"2028-08-07","precision":"approx"}],"tags":["chochin","kuni","mizu","night","parade","summer"],"founded":1180,"age":846,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_あばれ祭","name":"あばれ祭","pref":"石川県","city":"能登町","lat":37.31,"lng":137.22,"qid":null,"url":"https://ja.wikipedia.org/wiki/あばれ祭","summary":"40基のキリコと松明。神輿を火や海に投げ込む。","when":"7月第1金曜日・土曜日","months":[7],"occ":[{"start":"2026-07-03","end":"2026-07-04","precision":"exact"},{"start":"2027-07-02","end":"2027-07-03","precision":"exact"},{"start":"2028-07-07","end":"2028-07-08","precision":"exact"}],"tags":["hi","kenka","kiriko","mizu","night","summer","yatai"],"founded":1663,"age":363,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_会津田島祇園祭","name":"会津田島祇園祭","pref":"福島県","city":"南会津町","lat":37.2,"lng":139.77,"qid":null,"url":"https://ja.wikipedia.org/wiki/会津田島祇園祭","summary":"日本三大祇園祭のひとつ。花嫁行列の七行器行列。","when":"7月22日-24日","months":[7],"occ":[{"start":"2026-07-22","end":"2026-07-24","precision":"exact"},{"start":"2027-07-22","end":"2027-07-24","precision":"exact"},{"start":"2028-07-22","end":"2028-07-24","precision":"exact"}],"tags":["dashi","kids","kuni","parade","summer","yatai"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_佐原の大祭夏祭り（本宿祇園祭）","name":"佐原の大祭夏祭り（本宿祇園祭）","pref":"千葉県","city":"香取市","lat":35.893,"lng":140.499,"qid":null,"url":"https://ja.wikipedia.org/wiki/佐原の大祭夏祭り","summary":"高さ9mの大人形を乗せた山車。関東三大山車祭。","when":"7月10日以降の金曜日から3日間","months":[7],"occ":[{"start":"2026-07-10","end":"2026-07-10","precision":"exact"},{"start":"2027-07-10","end":"2027-07-10","precision":"exact"},{"start":"2028-07-10","end":"2028-07-10","precision":"exact"}],"tags":["dashi","kuni","night","summer","taiko","unesco","yatai"],"founded":1721,"age":305,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_全島エイサーまつり","name":"全島エイサーまつり","pref":"沖縄県","city":"沖縄市","lat":26.334,"lng":127.806,"qid":null,"url":"https://ja.wikipedia.org/wiki/全島エイサーまつり","summary":"沖縄本島の青年会が集う夏の締めくくり。","when":"旧暦7月20日以降の金土日","months":[7],"occ":[{"start":"2026-09-01","end":"2026-09-01","precision":"approx"},{"start":"2027-08-21","end":"2027-08-21","precision":"approx"},{"start":"2028-09-08","end":"2028-09-08","precision":"approx"}],"tags":["big","night","odori","summer","taiko","yatai"],"founded":1956,"age":70,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_八戸三社大祭","name":"八戸三社大祭","pref":"青森県","city":"八戸市","lat":40.5122,"lng":141.4883,"qid":null,"url":"https://ja.wikipedia.org/wiki/八戸三社大祭","summary":"27台の豪華な山車。ユネスコ無形文化遺産「山・鉾・屋台行事」。","when":"7月31日-8月4日","months":[7,8],"occ":[{"start":"2026-07-31","end":"2026-08-04","precision":"exact"},{"start":"2027-07-31","end":"2027-08-04","precision":"exact"},{"start":"2028-07-31","end":"2028-08-04","precision":"exact"}],"tags":["dashi","kids","kuni","mikoshi","night","summer","unesco","yatai"],"founded":1721,"age":305,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_博多祇園山笠","name":"博多祇園山笠","pref":"福岡県","city":"福岡市","lat":33.594,"lng":130.411,"qid":null,"url":"https://ja.wikipedia.org/wiki/博多祇園山笠","summary":"追い山の舁き山が5kmを駆け抜ける。ユネスコ無形文化遺産。","when":"7月1日-15日","months":[7],"occ":[{"start":"2026-07-01","end":"2026-07-15","precision":"exact"},{"start":"2027-07-01","end":"2027-07-15","precision":"exact"},{"start":"2028-07-01","end":"2028-07-15","precision":"exact"}],"tags":["big","dashi","hadaka","kuni","night","station","summer","unesco","yatai"],"founded":1241,"age":785,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_吉浜の鹿島踊り","name":"吉浜の鹿島踊り","pref":"神奈川県","city":"湯河原町","lat":35.15,"lng":139.11,"qid":null,"url":"https://ja.wikipedia.org/wiki/吉浜の鹿島踊り","summary":"相模湾岸に伝わる疫病除けの踊り。","when":"7月末の日曜日","months":[7],"occ":[{"start":"2026-07-26","end":"2026-07-26","precision":"exact"},{"start":"2027-07-25","end":"2027-07-25","precision":"exact"},{"start":"2028-07-23","end":"2028-07-23","precision":"exact"},{"start":"2028-07-30","end":"2028-07-30","precision":"exact"}],"tags":["kuni","mizu","odori","summer"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_塩屋湾のウンガミ（海神祭）","name":"塩屋湾のウンガミ（海神祭）","pref":"沖縄県","city":"大宜味村","lat":26.66,"lng":128.12,"qid":null,"url":"https://ja.wikipedia.org/wiki/塩屋湾のウンガミ","summary":"ハーリー船と女性たちの祈り。国指定重要無形民俗文化財。","when":"旧暦7月盆明けの亥の日","months":[7],"occ":[{"start":"2026-08-13","end":"2026-09-11","precision":"approx"},{"start":"2027-08-02","end":"2027-08-31","precision":"approx"},{"start":"2028-08-20","end":"2028-09-18","precision":"approx"}],"tags":["kuni","mizu","odori","summer"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_大山寺古式祭（もひとり神事）","name":"大山寺古式祭（もひとり神事）","pref":"鳥取県","city":"大山町","lat":35.38,"lng":133.54,"qid":null,"url":"https://ja.wikipedia.org/wiki/大山寺古式祭","summary":"御神水を汲む神事と山陰最大級の松明行列。","when":"7月14日・15日","months":[7],"occ":[{"start":"2026-07-14","end":"2026-07-15","precision":"exact"},{"start":"2027-07-14","end":"2027-07-15","precision":"exact"},{"start":"2028-07-14","end":"2028-07-15","precision":"exact"}],"tags":["chochin","hi","night","parade","summer"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_天神祭","name":"天神祭","pref":"大阪府","city":"大阪市","lat":34.696,"lng":135.512,"qid":null,"url":"https://ja.wikipedia.org/wiki/天神祭","summary":"日本三大祭。船渡御と奉納花火。","when":"7月24日・25日","months":[7],"occ":[{"start":"2026-07-24","end":"2026-07-25","precision":"exact"},{"start":"2027-07-24","end":"2027-07-25","precision":"exact"},{"start":"2028-07-24","end":"2028-07-25","precision":"exact"}],"tags":["big","hanabi","mikoshi","mizu","night","paid_seat","sandai","station","summer","yatai"],"founded":951,"age":1075,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_戸畑祇園大山笠","name":"戸畑祇園大山笠","pref":"福岡県","city":"北九州市","lat":33.893,"lng":130.83,"qid":null,"url":"https://ja.wikipedia.org/wiki/戸畑祇園大山笠","summary":"昼の幟山笠が夜は309個の提灯山笠に変わる。","when":"7月第4土曜日を挟む金土日","months":[7],"occ":[{"start":"2026-07-24","end":"2026-07-26","precision":"exact"},{"start":"2027-07-23","end":"2027-07-25","precision":"exact"},{"start":"2028-07-21","end":"2028-07-23","precision":"exact"}],"tags":["chochin","dashi","kuni","night","summer","unesco"],"founded":1802,"age":224,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_日田祇園祭","name":"日田祇園祭","pref":"大分県","city":"日田市","lat":33.321,"lng":130.941,"qid":null,"url":"https://ja.wikipedia.org/wiki/日田祇園祭","summary":"高さ10mの豪華な山鉾。","when":"7月20日過ぎの土曜日・日曜日","months":[7],"occ":[{"start":"2026-07-20","end":"2026-07-20","precision":"exact"},{"start":"2027-07-20","end":"2027-07-20","precision":"exact"},{"start":"2028-07-20","end":"2028-07-20","precision":"exact"}],"tags":["chochin","dashi","kuni","night","summer","yatai"],"founded":1717,"age":309,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_村上大祭","name":"村上大祭","pref":"新潟県","city":"村上市","lat":38.224,"lng":139.483,"qid":null,"url":"https://ja.wikipedia.org/wiki/村上大祭","summary":"19台のおしゃぎり（屋台山車）。","when":"7月6日・7日","months":[7],"occ":[{"start":"2026-07-06","end":"2026-07-07","precision":"exact"},{"start":"2027-07-06","end":"2027-07-07","precision":"exact"},{"start":"2028-07-06","end":"2028-07-07","precision":"exact"}],"tags":["dashi","kuni","night","summer","yatai"],"founded":1633,"age":393,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_浜降祭","name":"浜降祭","pref":"神奈川県","city":"茅ヶ崎市","lat":35.32,"lng":139.4,"qid":null,"url":"https://ja.wikipedia.org/wiki/浜降祭","summary":"夜明けの海に40基の神輿が入る「暁の祭典」。","when":"7月第3月曜日","months":[7],"occ":[{"start":"2026-07-20","end":"2026-07-20","precision":"exact"},{"start":"2027-07-19","end":"2027-07-19","precision":"exact"},{"start":"2028-07-17","end":"2028-07-17","precision":"exact"}],"tags":["ken","mikoshi","mizu","summer","yatai"],"founded":1838,"age":188,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_熊谷うちわ祭","name":"熊谷うちわ祭","pref":"埼玉県","city":"熊谷市","lat":36.147,"lng":139.389,"qid":null,"url":"https://ja.wikipedia.org/wiki/熊谷うちわ祭","summary":"12台の山車・屋台が集まる「関東一の祇園」。","when":"7月20日-22日","months":[7],"occ":[{"start":"2026-07-20","end":"2026-07-22","precision":"exact"},{"start":"2027-07-20","end":"2027-07-22","precision":"exact"},{"start":"2028-07-20","end":"2028-07-22","precision":"exact"}],"tags":["big","chochin","dashi","night","summer","yatai"],"founded":1750,"age":276,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_祇園祭","name":"祇園祭","pref":"京都府","city":"京都市","lat":35.0037,"lng":135.7681,"qid":null,"url":"https://ja.wikipedia.org/wiki/祇園祭","summary":"日本三大祭。1100年以上続く八坂神社の祭礼。","when":"7月1日-31日（山鉾巡行17日・24日）","months":[7],"occ":[{"start":"2026-07-01","end":"2026-07-31","precision":"exact"},{"start":"2027-07-01","end":"2027-07-31","precision":"exact"},{"start":"2028-07-01","end":"2028-07-31","precision":"exact"}],"tags":["big","chochin","dashi","kuni","night","paid_seat","sandai","station","summer","unesco","yatai"],"founded":869,"age":1157,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_那智の扇祭り（那智の火祭）","name":"那智の扇祭り（那智の火祭）","pref":"和歌山県","city":"那智勝浦町","lat":33.668,"lng":135.89,"qid":null,"url":"https://ja.wikipedia.org/wiki/那智の扇祭り","summary":"12体の扇神輿と大松明。日本三大火祭り。","when":"7月14日","months":[7],"occ":[{"start":"2026-07-14","end":"2026-07-14","precision":"exact"},{"start":"2027-07-14","end":"2027-07-14","precision":"exact"},{"start":"2028-07-14","end":"2028-07-14","precision":"exact"}],"tags":["big","hi","kuni","mikoshi","summer"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_郡上おどり","name":"郡上おどり","pref":"岐阜県","city":"郡上市","lat":35.748,"lng":136.964,"qid":null,"url":"https://ja.wikipedia.org/wiki/郡上おどり","summary":"32夜にわたる盆踊り。お盆は徹夜おどり。","when":"7月中旬 - 9月上旬","months":[7,9],"occ":[{"start":"2026-07-11","end":"2026-09-10","precision":"approx"},{"start":"2027-07-11","end":"2027-09-10","precision":"approx"},{"start":"2028-07-11","end":"2028-09-10","precision":"approx"}],"tags":["autumn","big","bonodori","kuni","night","summer","yatai"],"founded":1596,"age":430,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_龍ヶ崎の撞舞","name":"龍ヶ崎の撞舞","pref":"茨城県","city":"龍ケ崎市","lat":35.911,"lng":140.182,"qid":null,"url":"https://ja.wikipedia.org/wiki/龍ヶ崎の撞舞","summary":"14mの柱の上で雨蛙の面をつけた舞男が曲芸を舞う。","when":"7月下旬","months":[7],"occ":[{"start":"2026-07-21","end":"2026-07-31","precision":"approx"},{"start":"2027-07-21","end":"2027-07-31","precision":"approx"},{"start":"2028-07-21","end":"2028-07-31","precision":"approx"}],"tags":["kisai","kunisentaku","night","summer"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_しゃんしゃん祭","name":"しゃんしゃん祭","pref":"鳥取県","city":"鳥取市","lat":35.501,"lng":134.235,"qid":null,"url":"https://ja.wikipedia.org/wiki/しゃんしゃん祭","summary":"4000人が傘を回して踊る。因幡の傘踊りがルーツ。","when":"8月13日-15日","months":[8],"occ":[{"start":"2026-08-13","end":"2026-08-15","precision":"exact"},{"start":"2027-08-13","end":"2027-08-15","precision":"exact"},{"start":"2028-08-13","end":"2028-08-15","precision":"exact"}],"tags":["big","odori","station","summer","yatai"],"founded":1961,"age":65,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_たてもん祭り","name":"たてもん祭り","pref":"富山県","city":"魚津市","lat":36.827,"lng":137.408,"qid":null,"url":"https://ja.wikipedia.org/wiki/たてもん祭り","summary":"高さ16mの帆柱に90余りの提灯。ユネスコ無形文化遺産。","when":"8月第1金曜日・土曜日","months":[8],"occ":[{"start":"2026-08-07","end":"2026-08-08","precision":"exact"},{"start":"2027-08-06","end":"2027-08-07","precision":"exact"},{"start":"2028-08-04","end":"2028-08-05","precision":"exact"}],"tags":["chochin","kiriko","kuni","mizu","night","summer","unesco"],"founded":1690,"age":336,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_よさこい祭り","name":"よさこい祭り","pref":"高知県","city":"高知市","lat":33.559,"lng":133.531,"qid":null,"url":"https://ja.wikipedia.org/wiki/よさこい祭り","summary":"鳴子を持って踊る。全国のよさこいの原点。","when":"8月9日-12日","months":[8],"occ":[{"start":"2026-08-09","end":"2026-08-12","precision":"exact"},{"start":"2027-08-09","end":"2027-08-12","precision":"exact"},{"start":"2028-08-09","end":"2028-08-12","precision":"exact"}],"tags":["big","night","odori","station","summer","yatai"],"founded":1954,"age":72,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_五山送り火","name":"五山送り火","pref":"京都府","city":"京都市","lat":35.029,"lng":135.783,"qid":null,"url":"https://ja.wikipedia.org/wiki/五山送り火","summary":"盆の精霊を送る「大文字」。","when":"8月16日","months":[8],"occ":[{"start":"2026-08-16","end":"2026-08-16","precision":"exact"},{"start":"2027-08-16","end":"2027-08-16","precision":"exact"},{"start":"2028-08-16","end":"2028-08-16","precision":"exact"}],"tags":["big","hi","night","summer"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_仙台七夕まつり","name":"仙台七夕まつり","pref":"宮城県","city":"仙台市","lat":38.26,"lng":140.88,"qid":null,"url":"https://ja.wikipedia.org/wiki/仙台七夕まつり","summary":"伊達政宗の時代から続く。豪華な吹き流しが商店街を埋める。","when":"8月6日-8日","months":[8],"occ":[{"start":"2026-08-06","end":"2026-08-08","precision":"exact"},{"start":"2027-08-06","end":"2027-08-08","precision":"exact"},{"start":"2028-08-06","end":"2028-08-08","precision":"exact"}],"tags":["big","chochin","station","summer","yatai"],"founded":1600,"age":426,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_吉田の火祭り","name":"吉田の火祭り","pref":"山梨県","city":"富士吉田市","lat":35.478,"lng":138.793,"qid":null,"url":"https://ja.wikipedia.org/wiki/吉田の火祭り","summary":"日本三大奇祭。90本の大松明が町を火の海にする。","when":"8月26日・27日","months":[8],"occ":[{"start":"2026-08-26","end":"2026-08-27","precision":"exact"},{"start":"2027-08-26","end":"2027-08-27","precision":"exact"},{"start":"2028-08-26","end":"2028-08-27","precision":"exact"}],"tags":["hi","kisai","kuni","mikoshi","night","summer","yatai"],"founded":1572,"age":454,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_山口七夕ちょうちんまつり","name":"山口七夕ちょうちんまつり","pref":"山口県","city":"山口市","lat":34.178,"lng":131.474,"qid":null,"url":"https://ja.wikipedia.org/wiki/山口七夕ちょうちんまつり","summary":"10万個の紅提灯が街路を埋める。室町期に大内氏が始めたとされる。","when":"8月6日・7日","months":[8],"occ":[{"start":"2026-08-06","end":"2026-08-07","precision":"exact"},{"start":"2027-08-06","end":"2027-08-07","precision":"exact"},{"start":"2028-08-06","end":"2028-08-07","precision":"exact"}],"tags":["big","chochin","night","summer","yatai"],"founded":1450,"age":576,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_弘前ねぷたまつり","name":"弘前ねぷたまつり","pref":"青森県","city":"弘前市","lat":40.6031,"lng":140.464,"qid":null,"url":"https://ja.wikipedia.org/wiki/弘前ねぷたまつり","summary":"扇ねぷたに武者絵。享保年間の記録が残る。","when":"8月1日-7日","months":[8],"occ":[{"start":"2026-08-01","end":"2026-08-07","precision":"exact"},{"start":"2027-08-01","end":"2027-08-07","precision":"exact"},{"start":"2028-08-01","end":"2028-08-07","precision":"exact"}],"tags":["chochin","kiriko","kuni","night","summer","taiko","yatai"],"founded":1722,"age":304,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_新庄まつり","name":"新庄まつり","pref":"山形県","city":"新庄市","lat":38.762,"lng":140.301,"qid":null,"url":"https://ja.wikipedia.org/wiki/新庄まつり","summary":"20台の華やかな山車。ユネスコ無形文化遺産。","when":"8月24日-26日","months":[8],"occ":[{"start":"2026-08-24","end":"2026-08-26","precision":"exact"},{"start":"2027-08-24","end":"2027-08-26","precision":"exact"},{"start":"2028-08-24","end":"2028-08-26","precision":"exact"}],"tags":["dashi","kuni","mikoshi","night","summer","unesco","yatai"],"founded":1756,"age":270,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_東京高円寺阿波おどり","name":"東京高円寺阿波おどり","pref":"東京都","city":"杉並区","lat":35.705,"lng":139.65,"qid":null,"url":"https://ja.wikipedia.org/wiki/東京高円寺阿波おどり","summary":"1万人の踊り手。1957年に商店街の余興として始まった。","when":"8月下旬の土曜日・日曜日","months":[8],"occ":[{"start":"2026-08-22","end":"2026-08-23","precision":"exact"},{"start":"2027-08-21","end":"2027-08-22","precision":"exact"},{"start":"2028-08-26","end":"2028-08-27","precision":"exact"}],"tags":["big","night","odori","station","summer","yatai"],"founded":1957,"age":69,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_桐生祇園祭","name":"桐生祇園祭","pref":"群馬県","city":"桐生市","lat":36.405,"lng":139.33,"qid":null,"url":"https://ja.wikipedia.org/wiki/桐生祇園祭","summary":"鉾と神輿が織物の町を巡る。","when":"8月第1金曜日から3日間","months":[8],"occ":[{"start":"2026-08-07","end":"2026-08-09","precision":"exact"},{"start":"2027-08-06","end":"2027-08-08","precision":"exact"},{"start":"2028-08-04","end":"2028-08-06","precision":"exact"}],"tags":["dashi","mikoshi","night","summer","yatai"],"founded":1652,"age":374,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_江差姥神大神宮渡御祭","name":"江差姥神大神宮渡御祭","pref":"北海道","city":"江差町","lat":41.869,"lng":140.1275,"qid":null,"url":"https://ja.wikipedia.org/wiki/江差姥神大神宮渡御祭","summary":"北海道最古の祭礼。13台の山車が江差の町を練り歩く。","when":"8月9日-11日","months":[8],"occ":[{"start":"2026-08-09","end":"2026-08-11","precision":"exact"},{"start":"2027-08-09","end":"2027-08-11","precision":"exact"},{"start":"2028-08-09","end":"2028-08-11","precision":"exact"}],"tags":["dashi","kuni","mikoshi","night","summer","yatai"],"founded":1644,"age":382,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_深川八幡祭り","name":"深川八幡祭り","pref":"東京都","city":"江東区","lat":35.672,"lng":139.799,"qid":null,"url":"https://ja.wikipedia.org/wiki/深川八幡祭り","summary":"「水掛け祭」。53基の神輿に清めの水が浴びせられる。","when":"8月中旬（3年に一度が本祭）","months":[8],"occ":[{"start":"2026-08-11","end":"2026-08-20","precision":"approx"},{"start":"2027-08-11","end":"2027-08-20","precision":"approx"},{"start":"2028-08-11","end":"2028-08-20","precision":"approx"}],"tags":["big","mikoshi","mizu","sandai","summer","yatai"],"founded":1642,"age":384,"ageConf":"exact","over50":true,"irregular":true,"src":"seed"},{"id":"seed_盛岡さんさ踊り","name":"盛岡さんさ踊り","pref":"岩手県","city":"盛岡市","lat":39.7036,"lng":141.1527,"qid":null,"url":"https://ja.wikipedia.org/wiki/盛岡さんさ踊り","summary":"三ツ石神社の伝説に由来する輪踊り。和太鼓の数でギネス記録。","when":"8月1日-4日","months":[8],"occ":[{"start":"2026-08-01","end":"2026-08-04","precision":"exact"},{"start":"2027-08-01","end":"2027-08-04","precision":"exact"},{"start":"2028-08-01","end":"2028-08-04","precision":"exact"}],"tags":["big","night","odori","summer","taiko","yatai"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_秋田竿燈まつり","name":"秋田竿燈まつり","pref":"秋田県","city":"秋田市","lat":39.72,"lng":140.103,"qid":null,"url":"https://ja.wikipedia.org/wiki/秋田竿燈まつり","summary":"提灯46個をつけた竿燈を額や腰で支える。宝暦年間の記録あり。","when":"8月3日-6日","months":[8],"occ":[{"start":"2026-08-03","end":"2026-08-06","precision":"exact"},{"start":"2027-08-03","end":"2027-08-06","precision":"exact"},{"start":"2028-08-03","end":"2028-08-06","precision":"exact"}],"tags":["big","chochin","kuni","night","paid_seat","summer","yatai"],"founded":1751,"age":275,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_花笠まつり","name":"花笠まつり","pref":"山形県","city":"山形市","lat":38.2554,"lng":140.3396,"qid":null,"url":"https://ja.wikipedia.org/wiki/花笠まつり","summary":"花笠音頭に合わせて1万人が踊る。","when":"8月5日-7日","months":[8],"occ":[{"start":"2026-08-05","end":"2026-08-07","precision":"exact"},{"start":"2027-08-05","end":"2027-08-07","precision":"exact"},{"start":"2028-08-05","end":"2028-08-07","precision":"exact"}],"tags":["big","night","odori","summer","yatai"],"founded":1963,"age":63,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_西馬音内の盆踊り","name":"西馬音内の盆踊り","pref":"秋田県","city":"羽後町","lat":39.193,"lng":140.369,"qid":null,"url":"https://ja.wikipedia.org/wiki/西馬音内の盆踊り","summary":"編笠と彦三頭巾の亡者踊り。日本三大盆踊り。","when":"8月16日-18日","months":[8],"occ":[{"start":"2026-08-16","end":"2026-08-18","precision":"exact"},{"start":"2027-08-16","end":"2027-08-18","precision":"exact"},{"start":"2028-08-16","end":"2028-08-18","precision":"exact"}],"tags":["bonodori","chochin","kuni","night","summer","unesco"],"founded":1280,"age":746,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_長岡まつり大花火大会","name":"長岡まつり大花火大会","pref":"新潟県","city":"長岡市","lat":37.446,"lng":138.851,"qid":null,"url":"https://ja.wikipedia.org/wiki/長岡まつり大花火大会","summary":"戦災慰霊の花火。正三尺玉とフェニックス。","when":"8月2日・3日","months":[8],"occ":[{"start":"2026-08-02","end":"2026-08-03","precision":"exact"},{"start":"2027-08-02","end":"2027-08-03","precision":"exact"},{"start":"2028-08-02","end":"2028-08-03","precision":"exact"}],"tags":["big","hanabi","night","paid_seat","summer","yatai"],"founded":1946,"age":80,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_阿波おどり","name":"阿波おどり","pref":"徳島県","city":"徳島市","lat":34.07,"lng":134.554,"qid":null,"url":"https://ja.wikipedia.org/wiki/阿波おどり","summary":"400年の歴史。連が「ぞめき」の囃子で踊る。","when":"8月12日-15日","months":[8],"occ":[{"start":"2026-08-12","end":"2026-08-15","precision":"exact"},{"start":"2027-08-12","end":"2027-08-15","precision":"exact"},{"start":"2028-08-12","end":"2028-08-15","precision":"exact"}],"tags":["big","night","odori","paid_seat","station","summer","yatai"],"founded":1587,"age":439,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_青森ねぶた祭","name":"青森ねぶた祭","pref":"青森県","city":"青森市","lat":40.8283,"lng":140.74,"qid":null,"url":"https://ja.wikipedia.org/wiki/青森ねぶた祭","summary":"大型ねぶたとハネトの跳人。江戸中期には原型があったとされる。","when":"8月2日-7日","months":[8],"occ":[{"start":"2026-08-02","end":"2026-08-07","precision":"exact"},{"start":"2027-08-02","end":"2027-08-07","precision":"exact"},{"start":"2028-08-02","end":"2028-08-07","precision":"exact"}],"tags":["big","chochin","kiriko","kuni","night","odori","paid_seat","summer","yatai"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_鬼来迎","name":"鬼来迎","pref":"千葉県","city":"横芝光町","lat":35.66,"lng":140.51,"qid":null,"url":"https://ja.wikipedia.org/wiki/鬼来迎","summary":"地獄の様子を村人が演じる、国内唯一の仏教鬼舞。","when":"8月16日","months":[8],"occ":[{"start":"2026-08-16","end":"2026-08-16","precision":"exact"},{"start":"2027-08-16","end":"2027-08-16","precision":"exact"},{"start":"2028-08-16","end":"2028-08-16","precision":"exact"}],"tags":["kids","kuni","nou","summer"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_おわら風の盆","name":"おわら風の盆","pref":"富山県","city":"富山市","lat":36.567,"lng":137.133,"qid":null,"url":"https://ja.wikipedia.org/wiki/おわら風の盆","summary":"胡弓の音に合わせて坂の町を無言で流す。","when":"9月1日-3日","months":[9],"occ":[{"start":"2026-09-01","end":"2026-09-03","precision":"exact"},{"start":"2027-09-01","end":"2027-09-03","precision":"exact"},{"start":"2028-09-01","end":"2028-09-03","precision":"exact"}],"tags":["autumn","big","chochin","kunisentaku","night","odori"],"founded":1702,"age":324,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_大原はだか祭り","name":"大原はだか祭り","pref":"千葉県","city":"いすみ市","lat":35.25,"lng":140.386,"qid":null,"url":"https://ja.wikipedia.org/wiki/大原はだか祭り","summary":"18基の神輿が海に入る汐ふみ。","when":"9月23日-24日","months":[9],"occ":[{"start":"2026-09-23","end":"2026-09-24","precision":"exact"},{"start":"2027-09-23","end":"2027-09-24","precision":"exact"},{"start":"2028-09-23","end":"2028-09-24","precision":"exact"}],"tags":["autumn","hadaka","mikoshi","mizu","night","yatai"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_岸和田だんじり祭","name":"岸和田だんじり祭","pref":"大阪府","city":"岸和田市","lat":34.46,"lng":135.37,"qid":null,"url":"https://ja.wikipedia.org/wiki/岸和田だんじり祭","summary":"34台のだんじりが猛スピードでやりまわし。","when":"9月中旬の土曜日・日曜日","months":[9],"occ":[{"start":"2026-09-12","end":"2026-09-13","precision":"exact"},{"start":"2027-09-11","end":"2027-09-12","precision":"exact"},{"start":"2028-09-16","end":"2028-09-17","precision":"exact"}],"tags":["autumn","big","dashi","kenka","station","yatai"],"founded":1703,"age":323,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_川内大綱引","name":"川内大綱引","pref":"鹿児島県","city":"薩摩川内市","lat":31.81,"lng":130.3,"qid":null,"url":"https://ja.wikipedia.org/wiki/川内大綱引","summary":"重さ7tの大綱を数千人が引く420年の伝統行事。","when":"9月22日","months":[9],"occ":[{"start":"2026-09-22","end":"2026-09-22","precision":"exact"},{"start":"2027-09-22","end":"2027-09-22","precision":"exact"},{"start":"2028-09-22","end":"2028-09-22","precision":"exact"}],"tags":["autumn","big","ken","kisai","night"],"founded":1600,"age":426,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_常陸國總社宮大祭（石岡のおまつり）","name":"常陸國總社宮大祭（石岡のおまつり）","pref":"茨城県","city":"石岡市","lat":36.19,"lng":140.27,"qid":null,"url":"https://ja.wikipedia.org/wiki/常陸國總社宮大祭","summary":"関東三大祭。獅子と幌獅子が市街を埋める。","when":"9月の敬老の日を含む土日月","months":[9],"occ":[{"start":"2026-09-19","end":"2026-09-21","precision":"exact"},{"start":"2027-09-18","end":"2027-09-20","precision":"exact"},{"start":"2028-09-16","end":"2028-09-18","precision":"exact"}],"tags":["autumn","big","dashi","mikoshi","night","shishi","yatai"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_上野天神祭","name":"上野天神祭","pref":"三重県","city":"伊賀市","lat":34.768,"lng":136.13,"qid":null,"url":"https://ja.wikipedia.org/wiki/上野天神祭","summary":"鬼行列とだんじり。ユネスコ無形文化遺産。","when":"10月第3金曜日から3日間","months":[10],"occ":[{"start":"2026-10-16","end":"2026-10-18","precision":"exact"},{"start":"2027-10-15","end":"2027-10-17","precision":"exact"},{"start":"2028-10-20","end":"2028-10-22","precision":"exact"}],"tags":["autumn","dashi","kisai","kuni","night","parade","unesco"],"founded":1600,"age":426,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_伊勢神宮神嘗祭","name":"伊勢神宮神嘗祭","pref":"三重県","city":"伊勢市","lat":34.455,"lng":136.725,"qid":null,"url":"https://ja.wikipedia.org/wiki/伊勢神宮神嘗祭","summary":"その年の初穂を天照大神に捧げる、神宮最大の祭り。","when":"10月15日-25日","months":[10],"occ":[{"start":"2026-10-15","end":"2026-10-25","precision":"exact"},{"start":"2027-10-15","end":"2027-10-25","precision":"exact"},{"start":"2028-10-15","end":"2028-10-25","precision":"exact"}],"tags":["autumn","night","parade"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_佐原の大祭秋祭り（新宿秋祭り）","name":"佐原の大祭秋祭り（新宿秋祭り）","pref":"千葉県","city":"香取市","lat":35.898,"lng":140.504,"qid":null,"url":"https://ja.wikipedia.org/wiki/佐原の大祭秋祭り","summary":"14台の山車と佐原囃子。ユネスコ無形文化遺産。","when":"10月第2土曜日を中日とする金曜、土曜、日曜日","months":[10],"occ":[{"start":"2026-10-09","end":"2026-10-11","precision":"exact"},{"start":"2027-10-08","end":"2027-10-10","precision":"exact"},{"start":"2028-10-13","end":"2028-10-15","precision":"exact"}],"tags":["autumn","dashi","kuni","night","taiko","unesco","yatai"],"founded":1721,"age":305,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_備中神楽","name":"備中神楽","pref":"岡山県","city":"高梁市","lat":34.79,"lng":133.62,"qid":null,"url":"https://ja.wikipedia.org/wiki/備中神楽","summary":"秋の夜長に神殿で舞われる神楽。","when":"10月 - 12月","months":[10,12],"occ":[{"start":"2026-10-01","end":"2026-12-31","precision":"approx"},{"start":"2027-10-01","end":"2027-12-31","precision":"approx"},{"start":"2028-10-01","end":"2028-12-31","precision":"approx"}],"tags":["autumn","kagura","kuni","night","winter"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_出雲大社神在祭","name":"出雲大社神在祭","pref":"島根県","city":"出雲市","lat":35.402,"lng":132.686,"qid":null,"url":"https://ja.wikipedia.org/wiki/出雲大社神在祭","summary":"全国の神々が集う神在月の神事。","when":"旧暦10月11日-17日","months":[10],"occ":[{"start":"2026-11-19","end":"2026-11-19","precision":"approx"},{"start":"2027-11-08","end":"2027-11-08","precision":"approx"},{"start":"2028-11-26","end":"2028-11-26","precision":"approx"}],"tags":["autumn","kagura","night"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_大津祭","name":"大津祭","pref":"滋賀県","city":"大津市","lat":35.01,"lng":135.86,"qid":null,"url":"https://ja.wikipedia.org/wiki/大津祭","summary":"13基の曳山からちまきが撒かれる。からくり奉納。","when":"体育の日の前々日・前日","months":[10],"occ":[{"start":"2026-10-10","end":"2026-10-10","precision":"exact"},{"start":"2027-10-09","end":"2027-10-09","precision":"exact"},{"start":"2028-10-07","end":"2028-10-07","precision":"exact"}],"tags":["autumn","dashi","fukubiki","kuni","yatai"],"founded":1600,"age":426,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_島田大祭（帯まつり）","name":"島田大祭（帯まつり）","pref":"静岡県","city":"島田市","lat":34.836,"lng":138.176,"qid":null,"url":"https://ja.wikipedia.org/wiki/島田大祭","summary":"大奴が丸帯を太刀に下げて練り歩く日本三奇祭のひとつ。","when":"10月中旬（3年に一度）","months":[10],"occ":[{"start":"2026-10-11","end":"2026-10-20","precision":"approx"},{"start":"2027-10-11","end":"2027-10-20","precision":"approx"},{"start":"2028-10-11","end":"2028-10-20","precision":"approx"}],"tags":["autumn","dashi","ken","parade","yatai"],"founded":1695,"age":331,"ageConf":"exact","over50":true,"irregular":true,"src":"seed"},{"id":"seed_川越氷川祭（川越まつり）","name":"川越氷川祭（川越まつり）","pref":"埼玉県","city":"川越市","lat":35.927,"lng":139.487,"qid":null,"url":"https://ja.wikipedia.org/wiki/川越氷川祭","summary":"山車どうしがすれ違う「曳っかわせ」。ユネスコ無形文化遺産。","when":"10月第3土曜日・日曜日","months":[10],"occ":[{"start":"2026-10-17","end":"2026-10-18","precision":"exact"},{"start":"2027-10-16","end":"2027-10-17","precision":"exact"},{"start":"2028-10-21","end":"2028-10-22","precision":"exact"}],"tags":["autumn","big","chochin","dashi","kuni","night","station","unesco","yatai"],"founded":1648,"age":378,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_新居浜太鼓祭り","name":"新居浜太鼓祭り","pref":"愛媛県","city":"新居浜市","lat":33.96,"lng":133.28,"qid":null,"url":"https://ja.wikipedia.org/wiki/新居浜太鼓祭り","summary":"重さ3tの太鼓台51台。かきくらべと鉢合わせ。","when":"10月16日-18日","months":[10],"occ":[{"start":"2026-10-16","end":"2026-10-18","precision":"exact"},{"start":"2027-10-16","end":"2027-10-18","precision":"exact"},{"start":"2028-10-16","end":"2028-10-18","precision":"exact"}],"tags":["autumn","big","dashi","kenka","night","taiko","yatai"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_時代祭","name":"時代祭","pref":"京都府","city":"京都市","lat":35.016,"lng":135.782,"qid":null,"url":"https://ja.wikipedia.org/wiki/時代祭","summary":"平安遷都1100年を機に始まった時代行列。","when":"10月22日","months":[10],"occ":[{"start":"2026-10-22","end":"2026-10-22","precision":"exact"},{"start":"2027-10-22","end":"2027-10-22","precision":"exact"},{"start":"2028-10-22","end":"2028-10-22","precision":"exact"}],"tags":["autumn","big","paid_seat","parade"],"founded":1895,"age":131,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_灘のけんか祭り","name":"灘のけんか祭り","pref":"兵庫県","city":"姫路市","lat":34.77,"lng":134.73,"qid":null,"url":"https://ja.wikipedia.org/wiki/灘のけんか祭り","summary":"三基の神輿を激しくぶつけ合う。日本三大喧嘩祭り。","when":"10月14日・15日","months":[10],"occ":[{"start":"2026-10-14","end":"2026-10-15","precision":"exact"},{"start":"2027-10-14","end":"2027-10-15","precision":"exact"},{"start":"2028-10-14","end":"2028-10-15","precision":"exact"}],"tags":["autumn","big","dashi","ken","kenka","mikoshi","paid_seat","yatai"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_秋祭り（讃岐のちょうさ）","name":"秋祭り（讃岐のちょうさ）","pref":"香川県","city":"観音寺市","lat":34.13,"lng":133.66,"qid":null,"url":"https://ja.wikipedia.org/wiki/秋祭り","summary":"金糸の太鼓台「ちょうさ」がかき比べ。","when":"10月中旬の土曜日・日曜日","months":[10],"occ":[{"start":"2026-10-17","end":"2026-10-18","precision":"exact"},{"start":"2027-10-16","end":"2027-10-17","precision":"exact"},{"start":"2028-10-14","end":"2028-10-15","precision":"exact"}],"tags":["autumn","dashi","kenka","taiko","yatai"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_那覇大綱挽まつり","name":"那覇大綱挽まつり","pref":"沖縄県","city":"那覇市","lat":26.212,"lng":127.679,"qid":null,"url":"https://ja.wikipedia.org/wiki/那覇大綱挽まつり","summary":"世界一のわら綱をギネス認定。旗頭とエイサー。","when":"10月の体育の日を含む3連休","months":[10],"occ":[{"start":"2026-10-10","end":"2026-10-12","precision":"exact"},{"start":"2027-10-09","end":"2027-10-11","precision":"exact"},{"start":"2028-10-07","end":"2028-10-09","precision":"exact"}],"tags":["autumn","big","kisai","odori","yatai"],"founded":1450,"age":576,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_長崎くんち","name":"長崎くんち","pref":"長崎県","city":"長崎市","lat":32.748,"lng":129.876,"qid":null,"url":"https://ja.wikipedia.org/wiki/長崎くんち","summary":"龍踊やコッコデショなど奉納踊。","when":"10月7日-9日","months":[10],"occ":[{"start":"2026-10-07","end":"2026-10-09","precision":"exact"},{"start":"2027-10-07","end":"2027-10-09","precision":"exact"},{"start":"2028-10-07","end":"2028-10-09","precision":"exact"}],"tags":["autumn","big","kuni","mizu","odori","paid_seat","parade"],"founded":1634,"age":392,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_鞍馬の火祭","name":"鞍馬の火祭","pref":"京都府","city":"京都市","lat":35.118,"lng":135.77,"qid":null,"url":"https://ja.wikipedia.org/wiki/鞍馬の火祭","summary":"京都三大奇祭。数百本の松明が山里を焦がす。","when":"10月22日","months":[10],"occ":[{"start":"2026-10-22","end":"2026-10-22","precision":"exact"},{"start":"2027-10-22","end":"2027-10-22","precision":"exact"},{"start":"2028-10-22","end":"2028-10-22","precision":"exact"}],"tags":["autumn","hi","ken","kisai","mikoshi","night"],"founded":940,"age":1086,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_鹿沼今宮神社祭の屋台行事","name":"鹿沼今宮神社祭の屋台行事","pref":"栃木県","city":"鹿沼市","lat":36.567,"lng":139.745,"qid":null,"url":"https://ja.wikipedia.org/wiki/鹿沼今宮神社祭の屋台行事","summary":"白木彫刻の屋台27台。ユネスコ無形文化遺産。","when":"10月第2土曜日を中日とする土日","months":[10],"occ":[{"start":"2026-10-09","end":"2026-10-11","precision":"exact"},{"start":"2027-10-08","end":"2027-10-10","precision":"exact"},{"start":"2028-10-13","end":"2028-10-15","precision":"exact"}],"tags":["autumn","dashi","kuni","night","unesco","yatai"],"founded":1608,"age":418,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_龍勢祭","name":"龍勢祭","pref":"埼玉県","city":"秩父市","lat":36.01,"lng":139.15,"qid":null,"url":"https://ja.wikipedia.org/wiki/龍勢祭","summary":"手作りの農民ロケットを椋神社に奉納する。","when":"10月第2日曜日","months":[10],"occ":[{"start":"2026-10-11","end":"2026-10-11","precision":"exact"},{"start":"2027-10-10","end":"2027-10-10","precision":"exact"},{"start":"2028-10-08","end":"2028-10-08","precision":"exact"}],"tags":["autumn","hi","kisai","kuni","yatai"],"founded":null,"age":null,"ageConf":"proxy","over50":true,"irregular":false,"src":"seed"},{"id":"seed_おはら祭","name":"おはら祭","pref":"鹿児島県","city":"鹿児島市","lat":31.59,"lng":130.557,"qid":null,"url":"https://ja.wikipedia.org/wiki/おはら祭","summary":"2万人が天文館通りで総踊り。","when":"11月2日・3日","months":[11],"occ":[{"start":"2026-11-02","end":"2026-11-03","precision":"exact"},{"start":"2027-11-02","end":"2027-11-03","precision":"exact"},{"start":"2028-11-02","end":"2028-11-03","precision":"exact"}],"tags":["autumn","big","odori","station","yatai"],"founded":1949,"age":77,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_下総三山の七年祭り","name":"下総三山の七年祭り","pref":"千葉県","city":"船橋市","lat":35.706,"lng":140.049,"qid":null,"url":"https://ja.wikipedia.org/wiki/下総三山の七年祭り","summary":"6年に一度、9社の神輿が集まる大祭。","when":"11月（丑・未年）","months":[11],"occ":[{"start":"2026-11-01","end":"2026-11-30","precision":"approx"},{"start":"2027-11-01","end":"2027-11-30","precision":"approx"},{"start":"2028-11-01","end":"2028-11-30","precision":"approx"}],"tags":["autumn","ken","mikoshi","parade"],"founded":1481,"age":545,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_八代妙見祭","name":"八代妙見祭","pref":"熊本県","city":"八代市","lat":32.507,"lng":130.602,"qid":null,"url":"https://ja.wikipedia.org/wiki/八代妙見祭","summary":"亀蛇（ガメ）が跳ねる神幸行列。ユネスコ無形文化遺産。","when":"11月22日・23日","months":[11],"occ":[{"start":"2026-11-22","end":"2026-11-23","precision":"exact"},{"start":"2027-11-22","end":"2027-11-23","precision":"exact"},{"start":"2028-11-22","end":"2028-11-23","precision":"exact"}],"tags":["autumn","dashi","kuni","parade","unesco","yabusame","yatai"],"founded":1632,"age":394,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_唐津くんち","name":"唐津くんち","pref":"佐賀県","city":"唐津市","lat":33.45,"lng":129.97,"qid":null,"url":"https://ja.wikipedia.org/wiki/唐津くんち","summary":"14台の巨大な曳山が城下を曳き回される。","when":"11月2日-4日","months":[11],"occ":[{"start":"2026-11-02","end":"2026-11-04","precision":"exact"},{"start":"2027-11-02","end":"2027-11-04","precision":"exact"},{"start":"2028-11-02","end":"2028-11-04","precision":"exact"}],"tags":["autumn","big","dashi","kuni","night","unesco","yatai"],"founded":1768,"age":258,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_松明あかし","name":"松明あかし","pref":"福島県","city":"須賀川市","lat":37.286,"lng":140.373,"qid":null,"url":"https://ja.wikipedia.org/wiki/松明あかし","summary":"長さ10mの大松明を燃やす日本三大火祭り。","when":"11月第2土曜日","months":[11],"occ":[{"start":"2026-11-14","end":"2026-11-14","precision":"exact"},{"start":"2027-11-13","end":"2027-11-13","precision":"exact"},{"start":"2028-11-11","end":"2028-11-11","precision":"exact"}],"tags":["autumn","big","hi","night"],"founded":1589,"age":437,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_悪態まつり","name":"悪態まつり","pref":"茨城県","city":"笠間市","lat":36.345,"lng":140.264,"qid":null,"url":"https://ja.wikipedia.org/wiki/悪態まつり","summary":"参拝者が無言の行列に悪口を浴びせる奇祭。","when":"12月第3日曜日","months":[12],"occ":[{"start":"2026-12-20","end":"2026-12-20","precision":"exact"},{"start":"2027-12-19","end":"2027-12-19","precision":"exact"},{"start":"2028-12-17","end":"2028-12-17","precision":"exact"}],"tags":["kisai","parade","winter"],"founded":null,"age":null,"ageConf":"assumed","over50":true,"irregular":false,"src":"seed"},{"id":"seed_春日若宮おん祭","name":"春日若宮おん祭","pref":"奈良県","city":"奈良市","lat":34.681,"lng":135.848,"qid":null,"url":"https://ja.wikipedia.org/wiki/春日若宮おん祭","summary":"890年間一度も途切れず続く大和の大祭。","when":"12月15日-18日","months":[12],"occ":[{"start":"2026-12-15","end":"2026-12-18","precision":"exact"},{"start":"2027-12-15","end":"2027-12-18","precision":"exact"},{"start":"2028-12-15","end":"2028-12-18","precision":"exact"}],"tags":["kagura","kuni","night","nou","parade","winter","yabusame"],"founded":1136,"age":890,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"},{"id":"seed_秩父夜祭","name":"秩父夜祭","pref":"埼玉県","city":"秩父市","lat":35.993,"lng":139.085,"qid":null,"url":"https://ja.wikipedia.org/wiki/秩父夜祭","summary":"日本三大曳山祭。冬の夜空に花火と6台の笠鉾・屋台。","when":"12月2日・3日","months":[12],"occ":[{"start":"2026-12-02","end":"2026-12-03","precision":"exact"},{"start":"2027-12-02","end":"2027-12-03","precision":"exact"},{"start":"2028-12-02","end":"2028-12-03","precision":"exact"}],"tags":["big","chochin","dashi","hanabi","kuni","night","paid_seat","sandai","unesco","winter","yatai"],"founded":1704,"age":322,"ageConf":"exact","over50":true,"irregular":false,"src":"seed"}]}</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   状態
+   ===================================================================== */
+const S = {
+  all: [], tax: null, generated: "",
+  when: "soon", d1: null, d2: null, months: new Set(),
+  origin: null, originLabel: "", dist: 0,
+  age: 50, tags: new Set(), prefs: new Set(), q: "",
+  sort: "date", page: 1, PER: 60,
+  filtered: []
+};
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const today = new Date(); today.setHours(0,0,0,0);
+const iso = d => d.toISOString().slice(0,10);
+const parseD = s => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
+
+/* =====================================================================
+   地図
+   ===================================================================== */
+const map = L.map("map", { zoomControl:true, preferCanvas:true }).setView([36.5,138.2], 5);
+L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png", {
+  attribution:'地図: <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom:18
+}).addTo(map);
+const cluster = L.markerClusterGroup({
+  maxClusterRadius: 55, spiderfyOnMaxZoom:true, chunkedLoading:true,
+  iconCreateFunction(c){
+    const n=c.getChildCount();
+    const size = n<10?32 : n<50?38 : n<200?45 : 52;
+    return L.divIcon({html:`<div style="background:rgba(201,64,47,.85);color:#fff;width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${n<100?13:12}px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)">${n}</div>`,
+      className:"", iconSize:[size,size]});
+  }
+}).addTo(map);
+let originMarker = null, originCircle = null;
+
+/* =====================================================================
+   ユーティリティ
+   ===================================================================== */
+function haversine(a,b,c,d){
+  const R=6371, r=Math.PI/180;
+  const dLat=(c-a)*r, dLon=(d-b)*r;
+  const x=Math.sin(dLat/2)**2 + Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+function nextOcc(f, from){
+  if(!f.occ || !f.occ.length) return null;
+  for(const o of f.occ) if(parseD(o.end) >= from) return o;
+  return null;
+}
+function fmtOcc(o){
+  if(!o) return "開催日未定";
+  const s=parseD(o.start), e=parseD(o.end);
+  const wd="日月火水木金土"[s.getDay()];
+  const base = `${s.getMonth()+1}/${s.getDate()}(${wd})`;
+  const range = (o.start!==o.end) ? `${base}〜${e.getMonth()+1}/${e.getDate()}` : base;
+  const yr = s.getFullYear()!==today.getFullYear() ? `${s.getFullYear()}年 ` : "";
+  return yr + range + (o.precision==="approx" ? " ごろ" : "");
+}
+function daysUntil(o){ return o ? Math.round((parseD(o.start)-today)/864e5) : 9999; }
+function tagLabel(id){ const t=S.tax.tags.find(x=>x.id===id); return t?t.label:id; }
+const RANK=new Set(["unesco","kuni","kunisentaku","ken","shi","sandai"]);
+function ageBadge(f){
+  if(f.age && f.ageConf==="exact")     return {t:`${f.age}年つづく（${f.founded}年〜）`, c:"age"};
+  if(f.age && f.ageConf==="estimated") return {t:`約${f.age}年つづく（推定）`, c:"age"};
+  if(f.ageConf==="proxy")              return {t:"文化財指定・50年以上", c:"age"};
+  if(f.ageConf==="assumed")            return {t:"50年以上（推定）", c:"est"};
+  return null;
+}
+
+/* =====================================================================
+   フィルタ
+   ===================================================================== */
+function windowRange(){
+  if(S.d1 || S.d2) return [S.d1?parseD(S.d1):today, S.d2?parseD(S.d2):new Date(2100,0,1)];
+  if(S.when==="all")  return [new Date(2000,0,1), new Date(2100,0,1)];
+  if(S.when==="soon") return [today, new Date(2100,0,1)];
+  if(S.when==="weekend"){
+    const a=new Date(today); a.setDate(a.getDate() + ((6-a.getDay())%7));
+    const b=new Date(a); b.setDate(b.getDate()+1);
+    return [a,b];
+  }
+  const n=+S.when; const b=new Date(today); b.setDate(b.getDate()+n);
+  return [today,b];
+}
+
+function apply(){
+  const [wa,wb] = windowRange();
+  const out=[];
+  for(const f of S.all){
+    if(S.age && !(f.over50 && (S.age===50 || (f.age||0)>=S.age))) continue;
+    if(S.prefs.size && !S.prefs.has(f.pref)) continue;
+    if(S.tags.size){ let ok=true; for(const t of S.tags) if(!f.tags.includes(t)){ok=false;break;} if(!ok) continue; }
+    if(S.months.size && !f.months.some(m=>S.months.has(m))) continue;
+    if(S.q){
+      const hay = f.name + (f.pref||"") + (f.city||"") + (f.summary||"");
+      if(!hay.includes(S.q)) continue;
+    }
+    // 期間
+    let occ=null;
+    if(S.when==="all" && !S.d1 && !S.d2){ occ = nextOcc(f, today) || f.occ[0] || null; }
+    else{
+      for(const o of (f.occ||[])){
+        if(parseD(o.end) >= wa && parseD(o.start) <= wb){ occ=o; break; }
+      }
+      if(!occ) continue;
+    }
+    // 距離
+    let d=null;
+    if(S.origin){
+      d = haversine(S.origin[0],S.origin[1],f.lat,f.lng);
+      if(S.dist && d > S.dist) continue;
+    }
+    out.push({...f, _occ:occ, _d:d});
+  }
+
+  if(S.sort==="date")      out.sort((a,b)=> daysUntil(a._occ)-daysUntil(b._occ) || a.name.localeCompare(b.name,"ja"));
+  else if(S.sort==="dist") out.sort((a,b)=> (a._d??9e9)-(b._d??9e9));
+  else                     out.sort((a,b)=> (a.founded??9999)-(b.founded??9999));
+
+  S.filtered = out; S.page = 1;
+  $("#hit").innerHTML = `<b>${out.length.toLocaleString()}</b> 件`;
+  renderMap(); renderList(); renderCal(); updateCounts();
+}
+
+/* =====================================================================
+   描画: 地図
+   ===================================================================== */
+function renderMap(){
+  cluster.clearLayers();
+  const ms = S.filtered.slice(0, 4000).map(f=>{
+    const rank = f.tags.includes("unesco") ? "#b08b2e"
+               : f.tags.includes("kuni")   ? "#c9402f"
+               : f.tags.includes("ken")||f.tags.includes("shi") ? "#2d5a86" : "#6f6a63";
+    const r = f.tags.includes("unesco")||f.tags.includes("sandai") ? 8 : 6;
+    const m = L.circleMarker([f.lat,f.lng], {
+      radius:r, color:"#fff", weight:1.5, fillColor:rank, fillOpacity:.92, className:"mk"
+    });
+    m.bindPopup(()=>popupHTML(f), {maxWidth:280});
+    m._f = f;
+    return m;
+  });
+  cluster.addLayers(ms);
+}
+function popupHTML(f){
+  const ab=ageBadge(f);
+  const ranks=f.tags.filter(t=>RANK.has(t)).map(t=>`<span class="b rank">${tagLabel(t)}</span>`).join("");
+  const els=f.tags.filter(t=>!RANK.has(t)&&!["spring","summer","autumn","winter"].includes(t))
+                  .slice(0,7).map(t=>`<span class="b">${tagLabel(t)}</span>`).join("");
+  return `<h4>${f.name}</h4>
+    <div style="color:#6f6a63;font-size:11.5px">${(f.pref||"")}${f.city||""}</div>
+    <div class="date" style="margin-top:4px">${fmtOcc(f._occ)}</div>
+    ${f.when?`<div style="font-size:11px;color:#6f6a63">${f.when}</div>`:""}
+    ${f._d!=null?`<div style="font-size:11.5px;color:#2d5a86;margin-top:3px">現在地から ${f._d.toFixed(1)} km</div>`:""}
+    <div class="badges">${ab?`<span class="b ${ab.c}">${ab.t}</span>`:""}${ranks}${els}</div>
+    <div class="pop-links">
+      ${f.url?`<a href="${f.url}" target="_blank" rel="noopener">詳細</a>`:""}
+      <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lng}" target="_blank" rel="noopener">経路</a>
+    </div>`;
+}
+
+/* =====================================================================
+   描画: リスト
+   ===================================================================== */
+function renderList(){
+  const box=$("#listbody");
+  const rows=S.filtered.slice(0, S.page*S.PER);
+  if(!rows.length){
+    box.innerHTML=`<div class="empty">条件に合う祭りが見つかりませんでした。<br>期間を「通年」にするか、絞り込みを減らしてみてください。</div>`;
+    return;
+  }
+  box.innerHTML = rows.map(f=>{
+    const ab=ageBadge(f);
+    const ranks=f.tags.filter(t=>RANK.has(t)).map(t=>`<span class="b rank">${tagLabel(t)}</span>`).join("");
+    const els=f.tags.filter(t=>!RANK.has(t)&&!["spring","summer","autumn","winter"].includes(t))
+                    .slice(0,6).map(t=>`<span class="b">${tagLabel(t)}</span>`).join("");
+    return `<div class="card" data-id="${f.id}">
+      <h4>${f.name}</h4>
+      <div class="meta">
+        <span>${(f.pref||"")}${f.city||""}</span>
+        ${f._d!=null?`<span>${f._d.toFixed(1)} km</span>`:""}
+        ${f.irregular?`<span>不定期開催</span>`:""}
+      </div>
+      <div class="date">${fmtOcc(f._occ)}${f.when?` <span style="color:#6f6a63;font-weight:400;font-size:11px">（${f.when}）</span>`:""}</div>
+      <div class="badges">${ab?`<span class="b ${ab.c}">${ab.t}</span>`:""}${ranks}${els}</div>
+      ${f.summary?`<div class="summary">${f.summary}</div>`:""}
+    </div>`;
+  }).join("") + (S.filtered.length > rows.length
+      ? `<button id="more">さらに表示（残り ${S.filtered.length-rows.length} 件）</button>` : "");
+
+  $$("#listbody .card").forEach(el=>el.onclick=()=>focusFestival(el.dataset.id));
+  const more=$("#more"); if(more) more.onclick=()=>{ S.page++; renderList(); };
+}
+
+function focusFestival(id){
+  const f=S.filtered.find(x=>x.id===id); if(!f) return;
+  showPane("map");
+  map.setView([f.lat,f.lng], 12, {animate:true});
+  setTimeout(()=>{
+    L.popup({maxWidth:280}).setLatLng([f.lat,f.lng]).setContent(popupHTML(f)).openOn(map);
+  }, 320);
+}
+
+/* =====================================================================
+   描画: カレンダー
+   ===================================================================== */
+function renderCal(){
+  const byMonth = new Map();
+  for(const f of S.filtered.slice(0,1500)){
+    if(!f._occ) continue;
+    const k=f._occ.start.slice(0,7);
+    if(!byMonth.has(k)) byMonth.set(k,new Map());
+    const days=byMonth.get(k);
+    if(!days.has(f._occ.start)) days.set(f._occ.start,[]);
+    days.get(f._occ.start).push(f);
+  }
+  const keys=[...byMonth.keys()].sort().slice(0,14);
+  if(!keys.length){ $("#cal").innerHTML=`<div class="empty">表示できる開催日がありません。</div>`; return; }
+  $("#cal").innerHTML = keys.map(k=>{
+    const [y,m]=k.split("-");
+    const days=[...byMonth.get(k).entries()].sort();
+    const total=days.reduce((s,[,v])=>s+v.length,0);
+    return `<div class="mon"><h3>${y}年 ${+m}月<span>${total} 件</span></h3>` +
+      days.map(([d,fs])=>{
+        const dd=parseD(d), wd="日月火水木金土"[dd.getDay()];
+        const col = dd.getDay()===0?"#c9402f":dd.getDay()===6?"#2d5a86":"#22201d";
+        return `<div class="day"><div class="d" style="color:${col}">${+d.slice(8)}日(${wd})</div>
+          <div class="items">${fs.slice(0,40).map(f=>
+            `<a data-id="${f.id}">${f.name}<span style="color:#6f6a63;font-size:10.5px">${f.pref?" / "+f.pref:""}</span></a>`).join("")}
+          ${fs.length>40?`<span style="color:#6f6a63">ほか${fs.length-40}件</span>`:""}</div></div>`;
+      }).join("") + `</div>`;
+  }).join("");
+  $$("#cal a[data-id]").forEach(a=>a.onclick=()=>focusFestival(a.dataset.id));
+}
+
+/* =====================================================================
+   フィルタUIの生成
+   ===================================================================== */
+function buildFilters(){
+  // 月チップ
+  $("#monthchips").innerHTML = Array.from({length:12},(_,i)=>
+    `<button class="chip" data-month="${i+1}" style="padding:4px 8px">${i+1}月</button>`).join("");
+  $$("[data-month]").forEach(b=>b.onclick=()=>{
+    const m=+b.dataset.month;
+    if(S.months.has(m)){S.months.delete(m);b.classList.remove("on");}
+    else{S.months.add(m);b.classList.add("on");}
+    apply();
+  });
+
+  // 年数チップ
+  $("#agechips").innerHTML = S.tax.ageBuckets.map(a=>
+    `<button class="chip shu ${a.years===50?"on":""}" data-age="${a.years}">${a.label}</button>`).join("");
+  $$("[data-age]").forEach(b=>b.onclick=()=>{
+    $$("[data-age]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); S.age=+b.dataset.age; apply();
+  });
+
+  // タググループ
+  const html = S.tax.groups.filter(g=>g.id!=="season").map(g=>{
+    const tags=S.tax.tags.filter(t=>t.group===g.id);
+    if(!tags.length) return "";
+    return `<div class="fs ${g.id==="element"||g.id==="rank"?"":"collapsed"}" data-k="${g.id}">
+      <h3>${g.label}</h3><div class="fsbody">${tags.map(t=>
+        `<label class="cb"><input type="checkbox" data-tag="${t.id}"><span title="${t.label}">${t.label}</span></label>`
+      ).join("")}</div></div>`;
+  }).join("");
+  $("#tagfilters").innerHTML = html;
+  $$("[data-tag]").forEach(cb=>cb.onchange=()=>{
+    cb.checked ? S.tags.add(cb.dataset.tag) : S.tags.delete(cb.dataset.tag);
+    apply();
+  });
+
+  // 都道府県
+  const prefs=[...new Set(S.all.map(f=>f.pref).filter(Boolean))];
+  $("#prefchips").innerHTML = prefs.map(p=>
+    `<button class="chip" data-pref="${p}" style="padding:4px 7px;font-size:11px">${p.replace(/[都府県]$/,"")}</button>`).join("");
+  $$("[data-pref]").forEach(b=>b.onclick=()=>{
+    const p=b.dataset.pref;
+    if(S.prefs.has(p)){S.prefs.delete(p);b.classList.remove("on");}
+    else{S.prefs.add(p);b.classList.add("on");}
+    apply();
+  });
+
+  // 折りたたみ
+  $$(".fs > h3").forEach(h=>h.onclick=()=>h.parentElement.classList.toggle("collapsed"));
+}
+
+// チェックボックスの横に「その条件だけ足したら何件か」を出す
+function updateCounts(){
+  const base=S.filtered;
+  $$("[data-tag]").forEach(cb=>{
+    const t=cb.dataset.tag;
+    const n = S.tags.has(t) ? base.length : base.filter(f=>f.tags.includes(t)).length;
+    const sp=cb.nextElementSibling;
+    sp.textContent = tagLabel(t) + (n?` (${n})`:"");
+    cb.parentElement.style.opacity = n ? 1 : .35;
+  });
+}
+
+/* =====================================================================
+   イベント
+   ===================================================================== */
+$$("[data-when]").forEach(b=>b.onclick=()=>{
+  $$("[data-when]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.when=b.dataset.when;
+  S.d1=S.d2=null; $("#d1").value=""; $("#d2").value=""; apply();
+});
+$("#d1").onchange = $("#d2").onchange = ()=>{
+  S.d1=$("#d1").value||null; S.d2=$("#d2").value||null; apply();
+};
+$$("[data-dist]").forEach(b=>b.onclick=()=>{
+  $$("[data-dist]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.dist=+b.dataset.dist;
+  if(S.dist && !S.origin) useMapCenter();
+  drawOrigin(); apply();
+});
+$$("[data-sort]").forEach(b=>b.onclick=()=>{
+  $$("[data-sort]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.sort=b.dataset.sort;
+  if(S.sort==="dist" && !S.origin) useMapCenter();
+  apply();
+});
+$("#search").oninput = e=>{ S.q=e.target.value.trim(); clearTimeout(window._t); window._t=setTimeout(apply,180); };
+
+$("#geobtn").onclick = ()=>{
+  if(!navigator.geolocation){ $("#geostat").textContent="この端末では現在地を取得できません"; return; }
+  $("#geostat").textContent="取得中…";
+  navigator.geolocation.getCurrentPosition(p=>{
+    S.origin=[p.coords.latitude,p.coords.longitude]; S.originLabel="現在地";
+    $("#geobtn").classList.add("on"); $("#geostat").textContent=
+      `現在地: ${S.origin[0].toFixed(3)}, ${S.origin[1].toFixed(3)}`;
+    map.setView(S.origin, 9); drawOrigin(); apply();
+  }, ()=>{ $("#geostat").textContent="取得できませんでした。地図を動かして「地図の中心」を使えます。"; },
+  {enableHighAccuracy:false, timeout:10000, maximumAge:600000});
+};
+function useMapCenter(){
+  const c=map.getCenter(); S.origin=[c.lat,c.lng]; S.originLabel="地図の中心";
+  $("#geostat").textContent=`基準: 地図の中心 (${c.lat.toFixed(3)}, ${c.lng.toFixed(3)})`;
+  drawOrigin();
+}
+function drawOrigin(){
+  if(originMarker) map.removeLayer(originMarker);
+  if(originCircle) map.removeLayer(originCircle);
+  if(!S.origin) return;
+  originMarker = L.circleMarker(S.origin,{radius:7,color:"#fff",weight:2,fillColor:"#1b3a5c",fillOpacity:1}).addTo(map);
+  if(S.dist) originCircle = L.circle(S.origin,{radius:S.dist*1000,color:"#1b3a5c",weight:1,fillOpacity:.05,dashArray:"5,5"}).addTo(map);
+}
+map.on("moveend", ()=>{ if(S.originLabel==="地図の中心" && S.dist===0 && S.sort!=="dist") return; });
+
+$("#reset").onclick = ()=>{
+  S.when="soon"; S.d1=S.d2=null; S.months.clear(); S.dist=0; S.age=50;
+  S.tags.clear(); S.prefs.clear(); S.q=""; S.sort="date";
+  $("#search").value=""; $("#d1").value=""; $("#d2").value="";
+  $$("[data-tag]").forEach(c=>c.checked=false);
+  $$(".chip").forEach(c=>c.classList.remove("on"));
+  $('[data-when="soon"]').classList.add("on");
+  $('[data-dist="0"]').classList.add("on");
+  $('[data-age="50"]').classList.add("on");
+  $('[data-sort="date"]').classList.add("on");
+  drawOrigin(); apply();
+};
+
+$$("#tabs button").forEach(b=>b.onclick=()=>showPane(b.dataset.pane));
+function showPane(k){
+  $$("#tabs button").forEach(x=>x.classList.toggle("on", x.dataset.pane===k));
+  $$(".pane").forEach(p=>p.classList.toggle("on", p.id==="pane-"+k));
+  if(k==="map") setTimeout(()=>map.invalidateSize(),60);
+}
+$("#openside").onclick  = ()=>$("#side").classList.add("open");
+$("#closeside").onclick = ()=>$("#side").classList.remove("open");
+
+/* =====================================================================
+   起動
+   ===================================================================== */
+async function boot(){
+  let data=null;
+  try{ data = JSON.parse(document.getElementById("embedded-data").textContent); }catch(e){}
+  if(!data){
+    $("#hit").textContent="データを読み込めませんでした";
+    $("#listbody").innerHTML=`<div class="empty">data/festivals.json が見つかりません。<br>
+      <code>python3 scripts/build.py</code> を実行してデータを生成してください。</div>`;
+    return;
+  }
+  S.all = data.festivals; S.tax = data.taxonomy; S.generated = data.generated || "";
+  $("#gen").textContent = S.generated ? "更新 " + S.generated.slice(0,10) : "";
+  buildFilters();
+  apply();
+}
+boot();
+
+if(false){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "祭りマップ ― 50年以上つづく日本の祭り",
+  "short_name": "祭りマップ",
+  "description": "全国の50年以上つづく祭りを地図で。開催日・現在地からの距離・屋台/神輿/花火などの要素で絞り込めます。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f7f3ea",
+  "theme_color": "#1b3a5c",
+  "lang": "ja",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

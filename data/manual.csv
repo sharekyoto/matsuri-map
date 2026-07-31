@@ -1,0 +1,8 @@
+name,pref,city,lat,lng,when,founded,tags,url,note
+# ここに Wikipedia に載っていない地元の祭りを書き足してください。
+# when  … 「8月第1土曜日」「10月14日・15日」「旧暦6月15日」など日本語のまま書けます
+# founded … 創始年（西暦）。分からなければ空欄で可
+# tags  … taxonomy.py のタグIDを | 区切りで。例: yatai|mikoshi|fukubiki|night
+# lat/lng … 分かれば。空欄なら build.py が市区町村名からおおよその位置を補います
+# 下は書き方の例です。行頭の # を外すと反映されます。
+#○○神社秋季例大祭,京都府,京都市,35.0100,135.7700,10月第2日曜日,1780,mikoshi|yatai|fukubiki|shishi,,子ども神輿と餅まきがある町内の祭り
