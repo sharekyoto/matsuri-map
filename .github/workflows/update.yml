@@ -2,15 +2,25 @@ name: 祭りデータ月次更新 & 公開
 
 on:
   schedule:
+    # 毎月2日 05:00 JST（UTC 1日 20:00）。データ更新＋公開。
     - cron: "0 20 1 * *"
+    # 毎月16日 05:00 JST。データは触らず、リポジトリを「活動中」に保つだけ。
+    # GitHub は60日間活動がないと schedule を自動停止するため、その保険。
+    - cron: "0 20 15 * *"
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      full_rebuild:
+        description: "全国データを再収集する（30〜80分かかります）"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
   pages: write
   id-token: write
+  issues: write
 
 concurrency:
   group: pages
@@ -20,9 +30,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -32,17 +42,47 @@ jobs:
       - name: 日程パーサのセルフテスト
         run: python3 scripts/dates.py
 
+      - name: 収集するかどうかを判定
+        id: decide
+        run: |
+          COLLECT=no
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 20 1 * *" ]; then
+            COLLECT=yes
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_rebuild }}" = "true" ]; then
+            COLLECT=yes
+          fi
+          echo "collect=$COLLECT" >> "$GITHUB_OUTPUT"
+          echo "収集する: $COLLECT"
+
+      - name: 現在のデータを退避
+        if: steps.decide.outputs.collect == 'yes'
+        run: cp data/festivals.json data/festivals.prev.json
+
       - name: 祭りデータを収集
-        if: github.event_name != 'push'
+        if: steps.decide.outputs.collect == 'yes'
         run: python3 scripts/build.py
-        timeout-minutes: 90
+        timeout-minutes: 100
 
       - name: 生成物を検証
-        if: github.event_name != 'push'
+        id: validate
+        if: steps.decide.outputs.collect == 'yes'
         run: python3 scripts/validate.py
 
+      - name: 検証に失敗したら巻き戻す
+        if: failure() && steps.decide.outputs.collect == 'yes'
+        run: |
+          echo "::warning::検証に失敗したため前回のデータを維持します"
+          cp data/festivals.prev.json data/festivals.json
+
+      - name: 差分サマリを作る
+        if: steps.decide.outputs.collect == 'yes'
+        run: |
+          python3 scripts/report.py >> "$GITHUB_STEP_SUMMARY" || true
+          rm -f data/festivals.prev.json
+
       - name: 変更をコミット
-        if: github.event_name != 'push'
+        if: steps.decide.outputs.collect == 'yes'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -64,3 +104,32 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  notify-failure:
+    needs: [build, deploy]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '月次更新が失敗しました (' + new Date().toISOString().slice(0,10) + ')',
+              body: [
+                '自動更新のワークフローが失敗しました。',
+                '',
+                '実行ログ: ' + url,
+                '',
+                'よくある原因:',
+                '- Wikipedia / Wikidata / 国土地理院 のAPI仕様変更',
+                '- actions のバージョンが古くなった',
+                '- 収集件数が減りすぎて validate.py が弾いた',
+                '',
+                '公開中のサイトは前回のデータのまま動いているので、慌てて直す必要はありません。'
+              ].join('\n')
+            });
