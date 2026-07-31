@@ -189,12 +189,29 @@ def parse_schedule(raw: str) -> list[dict]:
 
     # --- ◯月だけ -----------------------------------------------------------
     if not rules:
-        months = sorted({int(x) for x in re.findall(r"(\d{1,2})月", t) if 1 <= int(x) <= 12})
-        if len(months) == 1:
-            rules.append({"kind": "month", "month": months[0]})
-        elif len(months) >= 2:
-            rules.append({"kind": "period_range", "m1": months[0], "p1": "上旬",
-                          "m2": months[-1], "p2": "下旬"})
+        # 出現順を保ったまま重複を除く。
+        # 「毎年10月（1952年 - 1978年は5月、…）」のような文では、
+        # 最初に書かれている月＝現在の開催月であることが多い。
+        seen_m, order = set(), []
+        for x in re.findall(r"(\d{1,2})月", t):
+            n = int(x)
+            if 1 <= n <= 12 and n not in seen_m:
+                seen_m.add(n)
+                order.append(n)
+
+        # 西暦や元号が混じる文（沿革の説明）で複数の月を範囲にすると
+        # 「1952年に5月から8月に変更」→ 5月〜8月 のような誤りになる
+        noisy = bool(re.search(r"(\d{3,4}年|[明治大正昭和平成令和]\d{1,2}年)", t)) or len(t) > 40
+
+        if len(order) == 1:
+            rules.append({"kind": "month", "month": order[0]})
+        elif len(order) >= 2:
+            if noisy:
+                rules.append({"kind": "month", "month": order[0]})
+            else:
+                lo, hi = min(order), max(order)
+                rules.append({"kind": "period_range", "m1": lo, "p1": "上旬",
+                              "m2": hi, "p2": "下旬"})
 
     # 重複除去（順序保持）
     seen, uniq = set(), []
