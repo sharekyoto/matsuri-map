@@ -1,35 +1,89 @@
-/* 祭りマップ Service Worker — オフラインでも一度見たデータを表示する */
-const CACHE = "matsuri-map-v1";
+/* 祭りマップ Service Worker
+ *
+ * 方針:
+ *   - 祭りデータ(JSON) … ネットワーク優先。毎月更新されるので、古い月のデータを
+ *     見せ続けないことを最優先する。オフライン時だけキャッシュにフォールバック。
+ *   - 地図タイル・CDN … キャッシュ優先（内容が変わらないため）
+ *   - サイト本体 … ネットワーク優先（更新をすぐ反映させる）
+ */
+const VERSION = "v3";
+const SHELL_CACHE = "matsuri-shell-" + VERSION;
+const DATA_CACHE = "matsuri-data-" + VERSION;
+const ASSET_CACHE = "matsuri-asset-" + VERSION;
+
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(SHELL_CACHE)
+      .then(c => c.addAll(SHELL))
+      .catch(() => {})
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", e => {
+  const keep = [SHELL_CACHE, DATA_CACHE, ASSET_CACHE];
   e.waitUntil(
-    caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    caches.keys()
+      .then(ks => Promise.all(ks.filter(k => !keep.includes(k)).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
-self.addEventListener("fetch", e => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== "GET") return;
+// ネットワーク優先。失敗したらキャッシュ。
+async function networkFirst(req, cacheName, timeoutMs) {
+  const cache = await caches.open(cacheName);
+  try {
+    const controller = new AbortController();
+    const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const res = await fetch(req, { cache: "no-cache", signal: controller.signal });
+    if (timer) clearTimeout(timer);
+    if (res && res.ok) {
+      cache.put(req, res.clone());
+      return res;
+    }
+    throw new Error("bad response");
+  } catch (err) {
+    const hit = await cache.match(req);
+    if (hit) return hit;
+    throw err;
+  }
+}
 
-  // データと地図タイルは stale-while-revalidate
-  if (url.pathname.endsWith(".json") || url.hostname.includes("gsi.go.jp") || url.hostname.includes("unpkg.com")) {
-    e.respondWith(
-      caches.open(CACHE).then(async c => {
-        const hit = await c.match(e.request);
-        const net = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; })
-                                    .catch(() => hit);
-        return hit || net;
-      })
-    );
+// キャッシュ優先。無ければ取得して保存。
+async function cacheFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res && res.ok) cache.put(req, res.clone());
+  return res;
+}
+
+self.addEventListener("fetch", e => {
+  const req = e.request;
+  if (req.method !== "GET") return;
+
+  const url = new URL(req.url);
+
+  // 祭りデータ: 常に最新を取りに行く（オフライン時のみキャッシュ）
+  if (url.pathname.endsWith(".json")) {
+    e.respondWith(networkFirst(req, DATA_CACHE, 6000));
     return;
   }
 
-  // それ以外は cache-first
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  // 地図タイル・CDNライブラリ: 変わらないのでキャッシュ優先
+  if (url.hostname.includes("gsi.go.jp") || url.hostname.includes("unpkg.com")) {
+    e.respondWith(cacheFirst(req, ASSET_CACHE));
+    return;
+  }
+
+  // 同一オリジンのページ・スクリプト: 更新をすぐ反映したいのでネットワーク優先
+  if (url.origin === self.location.origin) {
+    e.respondWith(networkFirst(req, SHELL_CACHE, 6000));
+    return;
+  }
+
+  e.respondWith(fetch(req).catch(() => caches.match(req)));
 });
