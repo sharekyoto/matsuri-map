@@ -101,7 +101,7 @@ jobs:
           git diff --staged --quiet || git commit -m "データ更新 $(date -u +%Y-%m-%d)"
           git push
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: .
