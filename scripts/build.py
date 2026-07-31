@@ -29,7 +29,7 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dates as D            # noqa: E402
@@ -63,9 +63,14 @@ SEED_CATEGORIES = [
     "Category:日本の祭り (都道府県別)",
     "Category:重要無形民俗文化財",
     "Category:選択無形民俗文化財",
+    "Category:都道府県指定無形民俗文化財",
     "Category:日本の年中行事",
     "Category:日本の民俗芸能",
     "Category:神道の祭祀",
+    "Category:日本の花火大会",
+    "Category:日本の盆踊り",
+    "Category:山・鉾・屋台行事",
+    "Category:日本の神事",
 ]
 
 # 祭りらしいタイトルの判定（カテゴリ経由で入ってきたノイズを落とす）
@@ -189,30 +194,76 @@ def category_members(cat: str, depth: int = 2, seen: set | None = None) -> set:
 # ---------------------------------------------------------------------------
 # 2) 記事本文・座標の取得
 # ---------------------------------------------------------------------------
+def strip_wikitext(s: str) -> str:
+    """ウィキテキストからタグ付け・年代判定に使えるプレーンテキストを作る。
+
+    完全なパースは狙わない。キーワード一致と年号抽出ができれば十分なので、
+    リンク・テンプレート・参照タグを潰して読める形にするだけ。
+    """
+    if not s:
+        return ""
+    s = re.sub(r"<ref[^>]*/>", "", s)
+    s = re.sub(r"<ref[^>]*>.*?</ref>", "", s, flags=re.S)
+    s = re.sub(r"<!--.*?-->", "", s, flags=re.S)
+    s = re.sub(r"<[^>]+>", "", s)
+
+    # テンプレートは中身を残したいものだけ展開してから、残りを削る。
+    # {{和暦|1750}} や {{要出典}} など。ネストは3回まで潰す。
+    s = re.sub(r"\{\{(?:和暦|西暦|JIS2004|読み|ruby|ルビ)\|([^{}|]*)[^{}]*\}\}", r"\1", s)
+    for _ in range(3):
+        s2 = re.sub(r"\{\{[^{}]*\}\}", " ", s)
+        if s2 == s:
+            break
+        s = s2
+
+    # [[記事名|表示名]] -> 表示名 / [[記事名]] -> 記事名
+    s = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]|]+)\]\]", r"\1", s)
+    s = re.sub(r"\[https?://\S+\s+([^\]]+)\]", r"\1", s)
+    s = re.sub(r"\[https?://\S+\]", "", s)
+
+    s = re.sub(r"^[=*#:;|!]+", " ", s, flags=re.M)   # 見出し・箇条書き・表の記号
+    s = s.replace("'''", "").replace("''", "")
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n{2,}", "\n", s)
+    return s.strip()
+
+
 def fetch_pages(titles: list[str]) -> dict:
-    """記事タイトル -> {text, lat, lng, qid, url}"""
+    """記事タイトル -> {text, lat, lng, qid, url}
+
+    本文は prop=revisions で取る。prop=extracts は全文モードだと
+    1件/リクエストに制限されるため、大量取得にはまったく向かない
+    （ここを間違えると 20 件のうち 1 件しか本文が返らない）。
+    """
     result: dict[str, dict] = {}
-    B = 20                                    # extracts は 20 件/リクエストが上限
+    B = 50
     for i in range(0, len(titles), B):
         batch = titles[i:i + B]
-        r = wp({"action": "query", "prop": "extracts|coordinates|pageprops|info",
-                "explaintext": 1, "exsectionformat": "plain",
+        r = wp({"action": "query",
+                "prop": "revisions|coordinates|pageprops|info",
+                "rvprop": "content", "rvslots": "main",
                 "colimit": "max", "inprop": "url",
                 "titles": "|".join(batch)})
-        for p in r.get("query", {}).get("pages", []):
+        pages = r.get("query", {}).get("pages", [])
+        for p in pages:
             if p.get("missing"):
                 continue
+            try:
+                wt = p["revisions"][0]["slots"]["main"]["content"]
+            except (KeyError, IndexError, TypeError):
+                wt = ""
             co = (p.get("coordinates") or [{}])[0]
             result[p["title"]] = {
-                "text": p.get("extract", "") or "",
+                "wikitext": wt,
+                "text": strip_wikitext(wt),
                 "lat": co.get("lat"),
                 "lng": co.get("lon"),
                 "qid": (p.get("pageprops") or {}).get("wikibase_item"),
                 "url": p.get("fullurl") or
                        "https://ja.wikipedia.org/wiki/" + urllib.parse.quote(p["title"]),
             }
-        if (i // B) % 20 == 0:
-            print(f"    pages {i}/{len(titles)}", flush=True)
+        if (i // B) % 10 == 0:
+            print(f"    pages {i}/{len(titles)}  (取得済 {len(result)})", flush=True)
         time.sleep(0.12)
     return result
 
@@ -311,15 +362,48 @@ def extract_place(text: str, hint_pref: str | None, hint_city: str) -> tuple:
     return pref, city
 
 
-def extract_schedule_text(text: str) -> str:
-    """本文から開催日らしい文を拾う。"""
-    head = text[:1500]
-    cues = ["開催日", "開催期間", "日程", "斎行", "例祭日", "毎年", "行われる", "催される"]
-    for sent in re.split(r"[。\n]", head):
-        if re.search(r"\d{1,2}月", sent) and any(c in sent for c in cues):
+SCHED_CUES = ["開催日", "開催期間", "開催時期", "日程", "斎行", "例祭日", "祭礼日",
+              "行事日", "毎年", "行われる", "行われている", "催される", "実施される",
+              "開催される", "奉納される", "執り行", "始まる"]
+
+# インフォボックスの日付フィールド
+INFOBOX_DATE = re.compile(
+    r"\|\s*(?:開催時期|開催日|日付|開催期間|時期|date|日程)\s*=\s*([^\n|}]{2,60})")
+
+
+def extract_schedule_text(text: str, wikitext: str = "") -> str:
+    """本文から開催日らしい文を拾う。
+
+    3段構え:
+      1. インフォボックスの「開催時期」等のフィールド
+      2. 「毎年◯月◯日に行われる」のような文脈語つきの文
+      3. 文脈語がなくても日付表現を含む文（本文全体を対象）
+    """
+    # 1) インフォボックス
+    if wikitext:
+        m = INFOBOX_DATE.search(wikitext)
+        if m:
+            v = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]|]+)\]\]", r"\1", m.group(1))
+            v = re.sub(r"\{\{[^{}]*\}\}", "", v).strip()
+            if re.search(r"\d{1,2}月|旧暦", v):
+                return v[:120]
+
+    DATEPAT = re.compile(
+        r"(\d{1,2}月\d{1,2}日|\d{1,2}月[のと]?第[1-5一二三四五][月火水木金土日]曜|"
+        r"\d{1,2}月[のと]?(?:最終|最後の|末の)[月火水木金土日]曜|"
+        r"\d{1,2}月(?:上旬|中旬|下旬|初旬)|旧暦\d{1,2}月|"
+        r"[のと]?(?:成人|海|敬老|スポーツ|体育)の日)")
+
+    sents = re.split(r"[。\n]", text)
+
+    # 2) 文脈語つき（前方の文を優先）
+    for sent in sents[:120]:
+        if DATEPAT.search(sent) and any(c in sent for c in SCHED_CUES):
             return sent.strip()[:120]
-    for sent in re.split(r"[。\n]", head):
-        if re.search(r"(\d{1,2}月\d{1,2}日|第[1-5一二三四五][月火水木金土日]曜|旧暦)", sent):
+
+    # 3) 文脈語なし
+    for sent in sents[:120]:
+        if DATEPAT.search(sent):
             return sent.strip()[:120]
     return ""
 
@@ -328,23 +412,29 @@ def slugify(title: str) -> str:
     return unicodedata.normalize("NFKC", title).replace(" ", "_")
 
 
+DROP = Counter()      # どの段階で何件落としたかの集計（診断用）
+
+
 def build_record(title: str, page: dict, hint: dict) -> dict | None:
     text = page.get("text") or ""
+    wt = page.get("wikitext") or ""
     if len(text) < 60:
+        DROP["本文が短すぎる"] += 1
         return None
 
-    date_text = hint.get("dateText") or extract_schedule_text(text)
-    occ, rules = D.occurrences(date_text, YEARS)
-    months = D.month_hint(rules)
+    # 一覧に書かれていた日付 → 本文/インフォボックス の順に試す
+    candidates = [hint.get("dateText") or "", extract_schedule_text(text, wt)]
+    date_text, occ, rules, months = "", [], [], []
+    for cand in candidates:
+        if not cand:
+            continue
+        o, r = D.occurrences(cand, YEARS)
+        m = D.month_hint(r)
+        if m:
+            date_text, occ, rules, months = cand, o, r, m
+            break
     if not months:
-        # 一覧に日付が無い記事は本文からもう一度だけ試す
-        alt = extract_schedule_text(text)
-        if alt and alt != date_text:
-            occ, rules = D.occurrences(alt, YEARS)
-            months = D.month_hint(rules)
-            if months:
-                date_text = alt
-    if not months:
+        DROP["開催時期が読み取れない"] += 1
         return None                                # 開催時期不明は地図に置けない
 
     tags = TX.tag_text(text)
@@ -507,6 +597,9 @@ def main() -> None:
                 print(f"        {n}/{len(todo)}", flush=True)
 
     records += load_manual()
+    nogeo = sum(1 for r in records if r["lat"] is None)
+    if nogeo:
+        DROP["座標が取れない"] += nogeo
     records = [r for r in records if r["lat"] is not None]
     records.sort(key=lambda r: (r["months"][0] if r["months"] else 13, r["name"]))
     print(f"      座標つき {len(records)} 件")
@@ -525,15 +618,28 @@ def main() -> None:
     size = os.path.getsize(out) / 1024
     print(f"      {out}  ({size:.0f} KB, {len(records)} 件)")
 
-    # 統計
-    from collections import Counter
-    print("\n--- 統計 ---")
+    # ---------------- 診断 ----------------
+    print("\n=== 収集の内訳 ===")
+    print(f"候補タイトル      : {len(titles)}")
+    print(f"本文を取得できた  : {len(pages)}")
+    for reason, n in DROP.most_common():
+        print(f"  除外: {reason:<22}: {n}")
+    print(f"最終レコード      : {len(records)}")
+
+    print("\n=== データの質 ===")
     print("50年以上:", sum(1 for r in records if r["over50"]))
     print("確度:", dict(Counter(r["ageConf"] for r in records)))
+    print("座標の由来:", dict(Counter(r.get("geoSrc", "wikipedia") for r in records)))
+    prefc = Counter(r["pref"] for r in records if r["pref"])
+    print(f"都道府県: {len(prefc)}/47")
+    missing = [p for p in PREFS if p not in prefc]
+    if missing:
+        print("  未収録:", "、".join(missing))
     tagc = Counter(t for r in records for t in r["tags"])
-    for tid, _ in tagc.most_common(15):
+    print("\n=== タグ上位 ===")
+    for tid, n in tagc.most_common(20):
         label = TX.TAGS.get(tid, (None, tid, None))[1]
-        print(f"  {label}: {tagc[tid]}")
+        print(f"  {label}: {n}")
 
 
 if __name__ == "__main__":

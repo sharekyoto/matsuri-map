@@ -1,0 +1,52 @@
+祭りマップ（matsuri-map）のライセンス
+=====================================
+
+このリポジトリには、ライセンスの異なる2種類のものが含まれます。
+
+
+1. ソースコード  ―  MIT License
+--------------------------------
+対象: index.html, sw.js, scripts/*.py, .github/**, manifest.webmanifest,
+      icon.svg, ogp.svg など、data/ 以外のすべて
+
+Copyright (c) 2026 sharekyoto
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+2. 祭りデータ  ―  CC BY-SA 4.0
+------------------------------
+対象: data/festivals.json, data/seed.json
+
+このデータは日本語版ウィキペディアの記事から生成されており、
+クリエイティブ・コモンズ 表示-継承 4.0 国際 (CC BY-SA 4.0) を継承します。
+https://creativecommons.org/licenses/by-sa/4.0/deed.ja
+
+再配布・改変する場合は、出典（日本語版ウィキペディア）を表示し、
+同じ CC BY-SA 4.0 で公開してください。
+
+座標の一部は Wikidata (CC0) および国土地理院のジオコーディングAPIに由来します。
+背景地図は国土地理院タイルを利用しています（出典明記のうえ利用可）。
+
+
+免責
+----
+開催日・開催有無は年により変わります。本サイトの情報は参考であり、
+正確性を保証するものではありません。お出かけの際は必ず主催者・自治体の
+公式情報をご確認ください。

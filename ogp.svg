@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#1b3a5c"/>
+
+  <!-- 背景の地図グリッド -->
+  <g stroke="#2d5a86" stroke-width="1" opacity=".5">
+    <path d="M0 90H1200M0 180H1200M0 270H1200M0 360H1200M0 450H1200M0 540H1200"/>
+    <path d="M100 0V630M250 0V630M400 0V630M550 0V630M700 0V630M850 0V630M1000 0V630M1150 0V630"/>
+  </g>
+
+  <!-- 散らばるマーカー（祭りの分布のイメージ） -->
+  <g>
+    <circle cx="905" cy="130" r="9" fill="#b08b2e" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="1010" cy="215" r="7" fill="#c9402f" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="850" cy="255" r="13" fill="#c9402f" stroke="#fff" stroke-width="3"/>
+    <circle cx="960" cy="330" r="7" fill="#2d5a86" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="1080" cy="140" r="7" fill="#c9402f" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="790" cy="180" r="7" fill="#2d5a86" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="1090" cy="380" r="10" fill="#b08b2e" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="880" cy="420" r="7" fill="#c9402f" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="1000" cy="480" r="7" fill="#2d5a86" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="800" cy="500" r="9" fill="#c9402f" stroke="#fff" stroke-width="2.5"/>
+    <circle cx="1130" cy="530" r="7" fill="#2d5a86" stroke="#fff" stroke-width="2.5"/>
+  </g>
+
+  <!-- 提灯 -->
+  <g transform="translate(148,232) scale(0.78)">
+    <rect x="-13" y="-150" width="26" height="14" rx="4" fill="#f7f3ea"/>
+    <ellipse cx="0" cy="-28" rx="88" ry="107" fill="#c9402f"/>
+    <g stroke="#8e2b1f" stroke-width="4.5" opacity=".5">
+      <path d="M-87 -66H87M-88 -28H88M-87 8H87M-79 46H79M-62 80H62"/>
+    </g>
+    <rect x="-35" y="-142" width="70" height="18" rx="6" fill="#f7f3ea"/>
+    <rect x="-35" y="70" width="70" height="18" rx="6" fill="#f7f3ea"/>
+    <text x="0" y="8" font-size="80" font-family="serif" font-weight="700"
+          fill="#f7f3ea" text-anchor="middle">祭</text>
+  </g>
+
+  <!-- テキスト -->
+  <text x="265" y="215" font-size="86" font-weight="700" fill="#f7f3ea"
+        font-family="'Hiragino Sans','Noto Sans JP',sans-serif" letter-spacing="6">祭りマップ</text>
+  <text x="268" y="285" font-size="35" fill="#b9cbdc"
+        font-family="'Hiragino Sans','Noto Sans JP',sans-serif" letter-spacing="2">50年以上つづく日本の祭りを、地図で探す</text>
+
+  <g font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+    <rect x="266" y="330" width="152" height="50" rx="25" fill="#c9402f"/>
+    <text x="342" y="363" font-size="24" fill="#fff" text-anchor="middle">開催日で探す</text>
+    <rect x="432" y="330" width="152" height="50" rx="25" fill="#c9402f"/>
+    <text x="508" y="363" font-size="24" fill="#fff" text-anchor="middle">距離で探す</text>
+    <rect x="598" y="330" width="118" height="50" rx="25" fill="#c9402f"/>
+    <text x="657" y="363" font-size="24" fill="#fff" text-anchor="middle">要素で探す</text>
+  </g>
+
+  <g font-family="'Hiragino Sans','Noto Sans JP',sans-serif" font-size="23" fill="#8fa9c1">
+    <text x="268" y="447">屋台 ・ 神輿 ・ 山車 ・ 花火 ・ 提灯 ・ 福引 ・ 神楽 ・ 獅子舞</text>
+    <text x="268" y="487">盆踊り ・ 裸祭り ・ 火祭り ・ けんか祭り ・ 奇祭 ・ 流鏑馬</text>
+  </g>
+
+  <rect x="266" y="536" width="620" height="2" fill="#2d5a86"/>
+  <text x="268" y="580" font-size="22" fill="#7e97ae"
+        font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+    全国47都道府県 ・ 毎月自動更新 ・ 無料 ・ 広告なし
+  </text>
+</svg>

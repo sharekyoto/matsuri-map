@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sharekyoto.github.io/matsuri-map/sitemap.xml

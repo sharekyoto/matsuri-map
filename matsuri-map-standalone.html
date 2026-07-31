@@ -7,6 +7,36 @@
 <meta name="description" content="全国の50年以上つづく祭りを地図で。開催日・現在地からの距離・屋台/神輿/花火などの要素で絞り込めます。">
 <meta name="theme-color" content="#1b3a5c">
 
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="canonical" href="https://sharekyoto.github.io/matsuri-map/">
+
+<!-- OGP / Twitter Card -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="祭りマップ">
+<meta property="og:title" content="祭りマップ ― 50年以上つづく日本の祭り">
+<meta property="og:description" content="全国の50年以上つづく祭りを地図で。開催日・現在地からの距離・屋台/神輿/花火などの要素で絞り込めます。">
+<meta property="og:url" content="https://sharekyoto.github.io/matsuri-map/">
+<meta property="og:image" content="https://sharekyoto.github.io/matsuri-map/ogp.svg">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+
+<!-- 構造化データ（検索結果での表示用） -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "祭りマップ",
+  "description": "全国の50年以上つづく祭りを、開催日・現在地からの距離・屋台や神輿などの要素で探せる地図サイト。",
+  "url": "https://sharekyoto.github.io/matsuri-map/",
+  "applicationCategory": "TravelApplication",
+  "operatingSystem": "Any",
+  "inLanguage": "ja",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "JPY" },
+  "license": "https://creativecommons.org/licenses/by-sa/4.0/"
+}
+</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
@@ -593,6 +623,21 @@ boot();
 
 if(false){
   window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+
+/* =====================================================================
+   アクセス解析（Cloudflare Web Analytics）
+   Cookie を使わず、個人を追跡しません。同意バナーは不要です。
+   使うには下の TOKEN に Cloudflare で発行したトークンを入れてください。
+   空のままなら解析スクリプトは一切読み込まれません。
+   ===================================================================== */
+const CF_ANALYTICS_TOKEN = "";   // ← ここにトークンを貼る
+if (CF_ANALYTICS_TOKEN && location.hostname !== "localhost") {
+  const s = document.createElement("script");
+  s.defer = true;
+  s.src = "https://static.cloudflareinsights.com/beacon.min.js";
+  s.setAttribute("data-cf-beacon", JSON.stringify({token: CF_ANALYTICS_TOKEN}));
+  document.head.appendChild(s);
 }
 </script>
 </body>
